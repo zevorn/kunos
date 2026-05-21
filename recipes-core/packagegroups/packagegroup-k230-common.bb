@@ -8,6 +8,7 @@ inherit packagegroup
 RDEPENDS:${PN} = " \
     packagegroup-core-boot \
     os-release \
+    fastfetch \
     busybox \
     bash \
     coreutils \
