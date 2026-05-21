@@ -4,6 +4,7 @@ set -euo pipefail
 mode="initrd"
 use_uboot=0
 use_net=1
+snapshot="${K230_SNAPSHOT:-0}"
 deploy_dir="${K230_DEPLOY_DIR:-}"
 qemu_bin="${K230_QEMU:-$HOME/qemu/build/qemu-system-riscv64}"
 append_extra="${K230_APPEND:-}"
@@ -19,19 +20,23 @@ sdk_sdimg="${K230_SDK_SDIMG:-}"
 
 usage() {
     cat <<EOF
-Usage: $0 [--initrd|--sd] [--uboot] [--deploy DIR] [--qemu PATH] [--sdk-artifacts DIR] [--no-net] [--append ARGS]
+Usage: $0 [--initrd|--sd] [--uboot] [--deploy DIR] [--qemu PATH] [--sdk-artifacts DIR] [--no-net] [--snapshot|--discard-writes] [--append ARGS]
 
 Defaults:
   --initrd      Direct QEMU boot with Image + DTB + cpio.gz initramfs.
   --sd          Direct QEMU boot with Image + DTB + raw WIC SD image.
   --uboot       Boot an SDK-compatible Yocto SD image through K230 SDK U-Boot.
   --sdk-sd IMG  SDK-compatible SD image for --uboot.
+  --snapshot    Discard guest writes to SD images instead of modifying them.
+  --discard-writes
+                Alias for --snapshot.
 
 Environment:
   K230_QEMU       QEMU binary, default: ~/qemu/build/qemu-system-riscv64
   K230_DEPLOY_DIR Yocto deploy/images/k230-canmv directory
   K230_UBOOT      K230 SDK U-Boot binary for --uboot
   K230_SDK_SDIMG  SDK-compatible SD image for --uboot
+  K230_SNAPSHOT   Set to 1/yes/true/on to discard guest writes to SD images
   K230_SDK_ARTIFACT_DIR
                  SDK artifacts directory, default: prebuilt/k230-sdk/riscv-nomtee
                  when present, otherwise ~/k230-project/images/riscv-nomtee
@@ -70,6 +75,10 @@ while [ "$#" -gt 0 ]; do
             sdk_sdimg="$2"
             shift 2
             ;;
+        --snapshot|--discard-writes)
+            snapshot=1
+            shift
+            ;;
         --append)
             append_extra="$2"
             shift 2
@@ -88,6 +97,19 @@ while [ "$#" -gt 0 ]; do
             ;;
     esac
 done
+
+case "$snapshot" in
+    1|yes|true|on)
+        snapshot=1
+        ;;
+    0|no|false|off|"")
+        snapshot=0
+        ;;
+    *)
+        printf 'Invalid K230_SNAPSHOT value: %s\n' "$snapshot" >&2
+        exit 2
+        ;;
+esac
 
 if [ ! -x "$qemu_bin" ]; then
     printf 'QEMU binary not executable: %s\n' "$qemu_bin" >&2
@@ -143,16 +165,30 @@ pad_sd_image_for_qemu() {
     fi
 }
 
+sd_drive_arg() {
+    local image="$1"
+    local drive="if=sd,file=${image},format=raw"
+
+    if [ "$snapshot" -eq 1 ]; then
+        drive="${drive},snapshot=on"
+    fi
+
+    printf '%s\n' "$drive"
+}
+
 kernel="$(first_existing "$deploy_dir/Image" "$deploy_dir/Image-k230-canmv.bin" "$deploy_dir"/Image--*.bin 2>/dev/null || true)"
 dtb="$(first_existing "$deploy_dir/canaan/k230-canmv.dtb" "$deploy_dir/k230-canmv.dtb" "$deploy_dir"/k230-canmv*.dtb 2>/dev/null || true)"
 initrd="$(first_existing "$deploy_dir/k230-core-image-k230-canmv.rootfs.cpio.gz" "$deploy_dir"/*.rootfs.cpio.gz 2>/dev/null || true)"
 sdimg="$(first_existing "$deploy_dir/k230-core-image-k230-canmv.rootfs.wic" "$deploy_dir/k230-core-image-k230-canmv.rootfs.wic.gz" "$deploy_dir"/*.rootfs.wic "$deploy_dir"/*.rootfs.wic.gz 2>/dev/null || true)"
 sdk_sdimg_auto="$(first_existing "$deploy_dir/k230-core-image-k230-canmv.sdk-sdcard.img" "$deploy_dir"/*.sdk-sdcard.img 2>/dev/null || true)"
 
-net_args=()
-if [ "$use_net" -eq 1 ]; then
-    net_args=(-nic user,model=usb-rtl8152,hostfwd=tcp::10022-:22)
-fi
+qemu_exec() {
+    if [ "$use_net" -eq 1 ]; then
+        exec "$qemu_bin" "$@" -nic user,model=usb-rtl8152,hostfwd=tcp::10022-:22 -nographic
+    fi
+
+    exec "$qemu_bin" "$@" -nographic
+}
 
 if [ "$use_uboot" -eq 1 ]; then
     if [ -z "$uboot_path" ] && [ -f "$sdk_artifact_dir/u-boot" ]; then
@@ -185,9 +221,9 @@ EOF
         pad_sd_image_for_qemu "$raw_sd"
         sdimg="$raw_sd"
     fi
-    exec "$qemu_bin" -machine k230 -m 2G -bios "$uboot_path" \
-        -drive if=sd,file="$sdimg",format=raw \
-        "${net_args[@]}" -nographic
+    sd_drive="$(sd_drive_arg "$sdimg")"
+    qemu_exec -machine k230 -m 2G -bios "$uboot_path" \
+        -drive "$sd_drive"
 fi
 
 if [ -z "$kernel" ] || [ -z "$dtb" ]; then
@@ -202,9 +238,9 @@ case "$mode" in
             exit 2
         fi
         append="console=ttyS0,115200 earlycon=sbi rdinit=/sbin/init ${append_extra}"
-        exec "$qemu_bin" -machine k230 -m 2G \
+        qemu_exec -machine k230 -m 2G \
             -kernel "$kernel" -dtb "$dtb" -initrd "$initrd" \
-            -append "$append" "${net_args[@]}" -nographic
+            -append "$append"
         ;;
     sd)
         if [ -z "$sdimg" ]; then
@@ -222,9 +258,10 @@ case "$mode" in
         sdimg="$raw_sd"
     fi
         append="console=ttyS0,115200 earlycon=sbi root=/dev/mmcblk1p2 rootwait rw ${append_extra}"
-        exec "$qemu_bin" -machine k230 -m 2G \
+        sd_drive="$(sd_drive_arg "$sdimg")"
+        qemu_exec -machine k230 -m 2G \
             -kernel "$kernel" -dtb "$dtb" \
-            -drive if=sd,file="$sdimg",format=raw \
-            -append "$append" "${net_args[@]}" -nographic
+            -drive "$sd_drive" \
+            -append "$append"
         ;;
 esac
