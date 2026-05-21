@@ -1,6 +1,6 @@
 # SPDX-License-Identifier: MIT
 
-SUMMARY = "K230 RISC-V Linux image with common command-line tools"
+SUMMARY = "kunOS image with common command-line tools"
 LICENSE = "MIT"
 
 inherit core-image
