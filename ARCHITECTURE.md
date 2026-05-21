@@ -16,8 +16,9 @@
 │  conf/templates/default/                conf/fragments/                      │    template：初始化 build 目录时使用的配置模板
 │  ┌──────────────────────────┐           ┌──────────────────────┐             │    fragment：可复用的小段配置，用于组合构建参数
 │  │ bblayers.conf.sample     │           │ distro/k230-linux    │             │    DISTRO：发行版策略，决定 init、包格式和功能集合
-│  │   - meta (oe-core)       │           │   -> DISTRO = "k230" │             │    MACHINE：目标硬件/板卡，选择内核、设备树和启动参数
-│  │   - meta-yocto-bsp       │           │                      │             │    DL_DIR：源码下载缓存，复用后可减少重复下载
+│  │   - meta (oe-core)       │           │   -> DISTRO_NAME     │             │    MACHINE：目标硬件/板卡，选择内核、设备树和启动参数
+│  │   - meta-yocto-bsp       │           │      = "kunOS"       │             │    DISTRO_NAME：发行版显示名称，用于 /etc/os-release
+│  │                          │           │                      │             │    DL_DIR：源码下载缓存，复用后可减少重复下载
 │  │   - meta-poky            │           │ machine/k230-canmv   │             │    SSTATE：共享状态缓存，复用后可减少重复编译
 │  │   - meta-k230            │           │  -> MACHINE = "canmv"│             │    oe-core/meta：OpenEmbedded Core，提供基础 recipe
 │  │                          │           └──────────────────────┘             │    meta-poky：Poky 发行版相关 metadata
@@ -29,7 +30,8 @@
 │                                                                              │    IMAGE_FEATURES：镜像级功能，例如 SSH、空密码、包管理
 │  conf/machine/k230-canmv.conf            conf/distro/k230-linux.conf         │    DISTRO_FEATURES：发行版能力集合，例如 ipv4、nfs、pam
 │  ┌────────────────────────────────┐      ┌────────────────────────────┐      │    PACKAGE_CLASSES/ipk：选择生成 .ipk 软件包
-│  │ SoC: Canaan K230               │      │ Base: poky.conf            │      │    RootFS：镜像中的根文件系统内容
+│  │ SoC: Canaan K230               │      │ Name:   kunOS              │      │    RootFS：镜像中的根文件系统内容
+│  │                                │      │ Base:   poky.conf          │      │    DISTRO_NAME：发行版显示名称
 │  │ Arch: RISC-V 64 (rv64imafdc)   │      │ Package: ipk (.ipk)        │      │    IMAGE_FSTYPES：决定输出 cpio.gz、ext4、wic.gz 等格式
 │  │ CPU:  T-HEAD C908 x 1 core     │      │ Init:   BusyBox (no sysd)  │      │    BusyBox init：轻量 init；这里没有启用 systemd
 │  │ RAM:  2GB (QEMU)               │      │                            │      │    Dropbear：轻量 SSH server，作为普通包安装
@@ -174,10 +176,17 @@
 │  │  ┌─────────────────────────────────┐  ┌─────────────────────────┐     │   │
 │  │  │ MMC / SD                        │  │ USB Host                │     │   │
 │  │  │ SD0 @0x9158_0000 (disabled)     │  │ USB0 @0x9150_0000       │     │   │
-│  │  │ SD1 @0x9158_1000 -> mmcblk0     │  │   (disabled)            │     │   │
+│  │  │ SD1 @0x9158_1000 -> mmcblk1     │  │   (disabled)            │     │   │
 │  │  │   dwcmshc-sdhci, 4-bit, 50MHz   │  │ USB1 @0x9154_0000       │     │   │
 │  │  │   cap-sd-highspeed, no-mmc      │  │   DWC2 host mode        │     │   │
 │  │  │   no-sdio                       │  │                         │     │   │
+│  │  └─────────────────────────────────┘  └─────────────────────────┘     │   │
+│  │                                                                       │   │
+│  │  ┌─────────────────────────────────┐  ┌─────────────────────────┐     │   │
+│  │  │ Disabled base peripherals       │  │ K230 control blocks     │     │   │
+│  │  │ UART1-4: snps,dw-apb-uart       │  │ reset @0x9110_1000      │     │   │
+│  │  │ I2C0-4: snps,designware-i2c     │  │ pinctrl @0x9110_5000    │     │   │
+│  │  │ SPI0-2: snps,dwc-ssi-1.01a      │  │ watchdog @0x9110_6000   │     │   │
 │  │  └─────────────────────────────────┘  └─────────────────────────┘     │   │
 │  │                                                                       │   │
 │  │  Memory @0x0000_0000, 2GB (0x8000_0000)                               │   │
@@ -203,6 +212,10 @@
 │  │                    │  │ BLK_DEV_INITRD      │  │ USB_USBNET          │    │
 │  │                    │  │                     │  │ USB_DWC2            │    │
 │  │                    │  │                     │  │ USB_DWC2_HOST       │    │
+│  ├────────────────────┤  ├─────────────────────┤  ├─────────────────────┤    │
+│  │ Base Peripherals   │  │ I2C_DESIGNWARE      │  │ SPI_DESIGNWARE      │    │
+│  ├────────────────────┤  │ I2C_CHARDEV         │  │ SPI_DW_MMIO         │    │
+│  │ PINCTRL_K230       │  │ DW_WATCHDOG         │  │ RESET_K230          │    │
 │  └────────────────────┘  └─────────────────────┘  └─────────────────────┘    │
 └──────────────────────────────────────────────────────────────────────────────┘
 
