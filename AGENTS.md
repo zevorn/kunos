@@ -21,6 +21,9 @@ Task-specific skills live under `.agents/skills/`.
 Load the matching skill before starting common work:
 
 - `k230-yocto-build`: Yocto setup, image build, deploy export, SDK SD image.
+- `k230-add-package`: add or validate packages in the K230 image, including
+  recipes, packagegroup updates, deploy export, SDK image refresh, and runtime
+  proof.
 - `k230-qemu-build`: build or verify the K230 QEMU dependency.
 - `k230-qemu-run`: choose and run SDK U-Boot, direct WIC, or initramfs boot.
 - `k230-test`: static checks and runtime smoke tests.
