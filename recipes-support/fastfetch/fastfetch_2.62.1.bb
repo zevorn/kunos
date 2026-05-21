@@ -8,7 +8,9 @@ BUGTRACKER = "https://github.com/fastfetch-cli/fastfetch/issues"
 LICENSE = "MIT"
 LIC_FILES_CHKSUM = "file://LICENSE;md5=2090e7d93df7ad5a3d41f6fb4226ac76"
 
-SRC_URI = "git://github.com/fastfetch-cli/fastfetch.git;protocol=https;branch=master;tag=${PV}"
+SRC_URI = "git://github.com/fastfetch-cli/fastfetch.git;protocol=https;branch=master;tag=${PV} \
+           file://config.jsonc \
+           file://kunos-cxk-chicken.txt"
 SRCREV = "4a61cdb1c9e4044ee959751e00bac1266dc6ebf9"
 
 inherit cmake pkgconfig
@@ -45,7 +47,19 @@ PACKAGECONFIG[xrandr] = "-DENABLE_XRANDR=ON,-DENABLE_XRANDR=OFF,libxrandr"
 PACKAGECONFIG[zfs] = "-DENABLE_LIBZFS=ON,-DENABLE_LIBZFS=OFF,zfs"
 PACKAGECONFIG[zlib] = "-DENABLE_ZLIB=ON,-DENABLE_ZLIB=OFF,zlib"
 
+do_install:append() {
+    install -d ${D}${sysconfdir}/xdg/fastfetch
+    install -d ${D}${datadir}/fastfetch/logos
+    install -m 0644 ${UNPACKDIR}/config.jsonc ${D}${sysconfdir}/xdg/fastfetch/config.jsonc
+    install -m 0644 ${UNPACKDIR}/kunos-cxk-chicken.txt ${D}${datadir}/fastfetch/logos/kunos-cxk-chicken.txt
+}
+
 PACKAGES =+ "${PN}-completions"
+
+FILES:${PN} += " \
+    ${sysconfdir}/xdg/fastfetch \
+    ${datadir}/fastfetch/logos \
+"
 
 FILES:${PN}-completions = " \
     ${datadir}/bash-completion \
