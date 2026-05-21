@@ -9,6 +9,7 @@ RDEPENDS:${PN} = " \
     packagegroup-core-boot \
     os-release \
     fastfetch \
+    picoclaw \
     busybox \
     bash \
     coreutils \
