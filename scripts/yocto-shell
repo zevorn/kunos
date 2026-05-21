@@ -1,0 +1,61 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+source "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/yocto-common.sh"
+
+yocto_require_docker
+
+if ! "$DOCKER" image inspect "$YOCTO_IMAGE" >/dev/null 2>&1; then
+    "$YOCTO_ROOT/scripts/yocto-build-image"
+fi
+
+"$YOCTO_ROOT/scripts/yocto-volumes" >/dev/null
+
+cmd=("$@")
+if [ "${#cmd[@]}" -eq 0 ]; then
+    cmd=(bash)
+fi
+
+container_proxy() {
+    local value="$1"
+    value="${value//127.0.0.1/host.docker.internal}"
+    value="${value//localhost/host.docker.internal}"
+    printf '%s\n' "$value"
+}
+
+container_http_proxy="$(container_proxy "${http_proxy:-${HTTP_PROXY:-}}")"
+container_https_proxy="$(container_proxy "${https_proxy:-${HTTPS_PROXY:-}}")"
+container_all_proxy="$(container_proxy "${all_proxy:-${ALL_PROXY:-}}")"
+container_no_proxy="${no_proxy:-${NO_PROXY:-}}"
+
+docker_run() {
+    exec "$DOCKER" run "$@" \
+        --platform "$YOCTO_PLATFORM" \
+        --hostname yocto-dev \
+        --env "LOCAL_UID=$(id -u)" \
+        --env "LOCAL_GID=$(id -g)" \
+        --env "LOCAL_USER=$(id -un)" \
+        --env "YOCTO_BB_THREADS=$YOCTO_BB_THREADS" \
+        --env "YOCTO_PARALLEL_MAKE_JOBS=$YOCTO_PARALLEL_MAKE_JOBS" \
+        --env "http_proxy=$container_http_proxy" \
+        --env "https_proxy=$container_https_proxy" \
+        --env "HTTP_PROXY=$container_http_proxy" \
+        --env "HTTPS_PROXY=$container_https_proxy" \
+        --env "all_proxy=$container_all_proxy" \
+        --env "ALL_PROXY=$container_all_proxy" \
+        --env "no_proxy=$container_no_proxy" \
+        --env "NO_PROXY=$container_no_proxy" \
+        --volume "$YOCTO_ROOT:/work/src" \
+        --volume "$YOCTO_BUILD_VOLUME:/work/build" \
+        --volume "$YOCTO_DOWNLOADS_VOLUME:/work/downloads" \
+        --volume "$YOCTO_SSTATE_VOLUME:/work/sstate" \
+        --workdir /work/src \
+        "$YOCTO_IMAGE" \
+        "${cmd[@]}"
+}
+
+if [ -t 0 ] && [ -t 1 ]; then
+    docker_run --rm -it
+fi
+
+docker_run --rm

@@ -1,44 +1,51 @@
-// SPDX-License-Identifier: GPL-2.0-only
+// SPDX-License-Identifier: MIT
 /dts-v1/;
 
 / {
     #address-cells = <2>;
     #size-cells = <2>;
-    model = "Canaan K230 CanMV";
+    model = "Canaan CanMV-K230";
     compatible = "canaan,k230-canmv", "canaan,k230";
 
     aliases {
         serial0 = &uart0;
+        mmc1 = &sd1;
     };
 
     chosen {
-        bootargs = "";
-        stdout-path = "serial0:115200";
-    };
-
-    ddr: memory@0 {
-        device_type = "memory";
-        reg = <0x0 0x0 0x0 0x80000000>;
+        stdout-path = "serial0:115200n8";
+        bootargs = "console=ttyS0,115200 earlycon=sbi root=/dev/mmcblk1p2 rootwait rw";
     };
 
     cpus {
         #address-cells = <1>;
         #size-cells = <0>;
-        timebase-frequency = <27000000>;
+        timebase-frequency = <10000000>;
 
-        cpu@0 {
+        cpu0: cpu@0 {
             device_type = "cpu";
             reg = <0>;
-            status = "okay";
-            compatible = "riscv";
-            riscv,isa = "rv64imafdc";
+            compatible = "thead,c908", "riscv";
+            riscv,isa = "rv64imafdc_zicsr_zifencei";
             mmu-type = "riscv,sv39";
+            status = "okay";
+
             cpu0_intc: interrupt-controller {
                 #interrupt-cells = <1>;
-                compatible = "riscv,cpu-intc";
                 interrupt-controller;
+                compatible = "riscv,cpu-intc";
             };
         };
+    };
+
+    memory@200000 {
+        device_type = "memory";
+        reg = <0x0 0x00200000 0x0 0x7fe00000>;
+    };
+
+    qemu_finisher: test@100000 {
+        compatible = "sifive,test1", "sifive,test0";
+        reg = <0x0 0x00100000 0x0 0x1000>;
     };
 
     soc {
@@ -47,32 +54,89 @@
         compatible = "simple-bus";
         ranges;
 
-        clint0: clint@f04000000 {
-            compatible = "riscv,clint0";
-            interrupts-extended = <&cpu0_intc 3 &cpu0_intc 7>;
-            reg = <0xf 0x04000000 0x0 0x04000000>;
-            clint,has-no-64bit-mmio;
+        clint: clint@f04000000 {
+            compatible = "sifive,clint0", "riscv,clint0";
+            reg = <0xf 0x04000000 0x0 0x400000>;
+            interrupts-extended = <&cpu0_intc 3>, <&cpu0_intc 7>;
         };
 
-        intc: interrupt-controller@f00000000 {
+        plic: interrupt-controller@f00000000 {
+            compatible = "sifive,plic-1.0.0";
+            reg = <0xf 0x00000000 0x0 0x400000>;
             #interrupt-cells = <1>;
-            compatible = "riscv,plic0";
             interrupt-controller;
-            interrupts-extended = <&cpu0_intc 0xffffffff &cpu0_intc 9>;
-            reg = <0xf 0x00000000 0x0 0x04000000>;
-            reg-names = "control";
-            riscv,max-priority = <7>;
-            riscv,ndev = <200>;
+            riscv,ndev = <208>;
+            interrupts-extended = <&cpu0_intc 11>, <&cpu0_intc 9>;
+        };
+
+        apb_clk: apb-clock {
+            compatible = "fixed-clock";
+            #clock-cells = <0>;
+            clock-frequency = <50000000>;
+            clock-output-names = "apb";
+        };
+
+        sd_clk: sd-clock {
+            compatible = "fixed-clock";
+            #clock-cells = <0>;
+            clock-frequency = <100000000>;
+            clock-output-names = "sd";
         };
 
         uart0: serial@91400000 {
             compatible = "snps,dw-apb-uart";
             reg = <0x0 0x91400000 0x0 0x1000>;
-            interrupt-parent = <&intc>;
             interrupts = <16>;
+            interrupt-parent = <&plic>;
             clock-frequency = <50000000>;
             reg-shift = <2>;
             reg-io-width = <4>;
+            status = "okay";
+        };
+
+        sd0: mmc@91580000 {
+            compatible = "snps,dwcmshc-sdhci";
+            reg = <0x0 0x91580000 0x0 0x1000>;
+            interrupts = <142>;
+            interrupt-parent = <&plic>;
+            clocks = <&sd_clk>, <&apb_clk>;
+            clock-names = "core", "bus";
+            bus-width = <4>;
+            max-frequency = <50000000>;
+            status = "disabled";
+        };
+
+        sd1: mmc@91581000 {
+            compatible = "snps,dwcmshc-sdhci";
+            reg = <0x0 0x91581000 0x0 0x1000>;
+            interrupts = <144>;
+            interrupt-parent = <&plic>;
+            clocks = <&sd_clk>, <&apb_clk>;
+            clock-names = "core", "bus";
+            bus-width = <4>;
+            max-frequency = <50000000>;
+            cap-sd-highspeed;
+            disable-wp;
+            no-mmc;
+            no-sdio;
+            status = "okay";
+        };
+
+        usb0: usb@91500000 {
+            compatible = "snps,dwc2";
+            reg = <0x0 0x91500000 0x0 0x10000>;
+            interrupts = <173>;
+            interrupt-parent = <&plic>;
+            dr_mode = "host";
+            status = "disabled";
+        };
+
+        usb1: usb@91540000 {
+            compatible = "snps,dwc2";
+            reg = <0x0 0x91540000 0x0 0x10000>;
+            interrupts = <174>;
+            interrupt-parent = <&plic>;
+            dr_mode = "host";
             status = "okay";
         };
     };

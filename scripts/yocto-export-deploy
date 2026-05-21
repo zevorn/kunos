@@ -1,0 +1,32 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+dest="${1:-build-artifacts/k230-canmv}"
+
+case "$dest" in
+    /*)
+        printf "Destination must be inside the meta-k230 checkout: %s\n" "$dest" >&2
+        exit 2
+        ;;
+esac
+
+exec "$script_dir/yocto-shell" bash -lc '
+set -euo pipefail
+
+dest="$1"
+deploy="$(find /work/build -path "*/tmp/deploy/images/k230-canmv" -type d 2>/dev/null | sort | tail -n 1)"
+if [ -z "$deploy" ] || [ ! -d "$deploy" ]; then
+    cat >&2 <<EOF
+Cannot find tmp/deploy/images/k230-canmv.
+
+Build first:
+  ./scripts/yocto-bitbake k230-core-image
+EOF
+    exit 2
+fi
+
+mkdir -p "/work/src/$dest"
+cp -a "$deploy/." "/work/src/$dest/"
+printf "Exported deploy artifacts to %s\n" "$dest"
+' yocto-export-deploy "$dest"
