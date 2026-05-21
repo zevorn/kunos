@@ -27,6 +27,8 @@ Load the matching skill before starting common work:
 - `k230-docker`: Dockerfile, entrypoint, volumes, and container shell workflow.
 - `k230-config-explain`: explain machine, distro, kernel, DTS, WIC, and OpenSBI
   configuration.
+- `yocto-commit-message`: write, review, split, or rewrite commits using
+  Yocto/OpenEmbedded contribution conventions.
 
 ## Quick Commands
 
