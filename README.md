@@ -131,6 +131,12 @@ The current build was verified with:
 - SDK rootfs mounted from `/dev/mmcblk1p3`
 - direct WIC rootfs mounted from `/dev/mmcblk1p2`, with `/boot` on `/dev/mmcblk1p1`
 
+## Agent Skills
+
+Repository-local agent skills live under `.agents/skills/`. They cover the
+K230 Yocto build, QEMU dependency build, QEMU boot modes, smoke tests, Docker
+workflow, and configuration explanation.
+
 ## Notes
 
 - Build outputs under `build-artifacts/` are ignored and should not be
