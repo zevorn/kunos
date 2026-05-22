@@ -20,6 +20,7 @@ The output image uses the SDK layout expected by k230_boot:
   rtt    partition at 10MiB
   linux  partition at 30MiB containing K230-headed linux_system.bin
   rootfs partition at 128MiB containing the Yocto ext4 rootfs
+  disk   2GiB minimum, growing to the next power of two when needed
 
 Defaults:
   --deploy      build-artifacts/k230-canmv
@@ -308,7 +309,7 @@ root_part_bytes = max(512 * MIB, align_up(rootfs_size, 64 * MIB))
 root_size = sectors(root_part_bytes)
 app_start = sectors(align_up(root_start * SECTOR + root_part_bytes, MIB))
 min_image_size = align_up(app_start * SECTOR + 128 * MIB + (34 * SECTOR), MIB)
-image_size = next_power_of_two(max(1024 * MIB, min_image_size))
+image_size = next_power_of_two(max(2048 * MIB, min_image_size))
 total_sectors = image_size // SECTOR
 last_lba = total_sectors - 1
 backup_entries_lba = last_lba - 32

@@ -156,7 +156,7 @@ file_size() {
 
 pad_sd_image_for_qemu() {
     local image="$1"
-    local target_size=1073741824
+    local target_size=$((2 * 1024 * 1024 * 1024))
     local current_size
 
     current_size="$(file_size "$image")"
