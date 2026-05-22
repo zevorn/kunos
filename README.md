@@ -1,18 +1,73 @@
-# meta-k230
+<h1 align="center">kunOS</h1>
 
-Yocto BSP layer and helper scripts for building a small RISC-V Linux
-distribution for the Canaan K230 CanMV board model supported by the K230 QEMU
-branch.
+<div align="center">
+
+<table align="center">
+<tr>
+<td align="left">
+<pre>
+              ⢀⠤⠄⣀
+       ⣀⠤⠐⠒⠒⠒⠒⠉   ⠉⠒⠄⡀
+    ⢀⠔⠋      ⢀⠔⣀⣔⠠⡀  ⠈⠢⣄
+  ⢀⠔⠁        ⡜⠉   ⠉⢄ ⡀  ⠣⡀
+ ⡠⠃         ⢰⠁⢀    ⠈⡆⠱⡀  ⢱
+⡔    ⡎      ⠸  ⠈⠢⡠⠊ ⠘⢀⣱   ⡆
+⠁⢼  ⢠⠃  ⢰ ⣠⡄⣠ ⠸⠿⢀⠇  ⠸⠟⡈⠡⡀⠠⠁
+ ⠸⢀⡤⠴⡄  ⢸⠈⠁⠈⠂ ⠠⠴⠃⠈⠢⡄ ⠊  ⢸
+⠤⠄⠰⡇ ⠁  ⠁      ⠘⠂⡀ ⡀⠃    ⡘
+   ⢈⣦⡀⠤ ⠐⠒⠒⠒⠒⠒ ⠤⠤ ⣀⣀ ⢀⡤⡊
+⠁ ⠈⢍          ⢀⣀⣀⡀        ⣠⠃
+ ⠒⠂⢤⠏⠉⠃ ⠂  ⢠⠞⠉  ⠙⢦   ⠤⠤⠒⠉⠘⡆
+            ⠈⠣⣀⣸⣇⣀⠜
+</pre>
+</td>
+<td align="left">
+<pre>
+root@k230-canmv
+--------------
+OS       : kunOS 1.0 (wrynose)
+Host     : Canaan CanMV-K230
+Kernel   : Linux 6.18.28
+Shell    : BusyBox ash
+CPU      : T-HEAD C908
+Memory   : 2 GiB
+Packages : ipk / opkg
+Boot     : OpenSBI + Linux
+SD       : 2 GiB WIC / SDK image
+</pre>
+</td>
+</tr>
+</table>
+
+**A compact Yocto/OpenEmbedded RISC-V Linux image for the Canaan CanMV-K230.**
+
+</div>
+
+kunOS is a small Yocto/OpenEmbedded-built RISC-V Linux distribution for the
+Canaan CanMV-K230 board. This repository contains the K230 Yocto BSP layer,
+distro configuration, image recipes, kernel device tree and config fragments,
+SDK image packer, and QEMU helper scripts used to build and test kunOS.
+
+The current target is the `k230-canmv` machine under the K230-capable QEMU
+branch. The image is intentionally lightweight: BusyBox init, Dropbear SSH,
+`opkg` package management, common command-line tools, and a kunOS-branded
+`fastfetch` setup are included by default.
+
+This is a Linux bring-up and development image. The current QEMU path models the
+small C908/Linux side and selected board peripherals; K230 KPU, AI2D, camera,
+and full multimedia pipelines still need real hardware and SDK-side integration
+for meaningful validation.
 
 ## Repositories and Branches
 
-- meta-k230: `git@github.com:zevorn/meta-k230.git`
+- kunOS: `git@github.com:zevorn/kunos.git`
 - QEMU: `git@github.com:zevorn/qemu.git`, branch `chao-k230-dev`
 - Yocto/OpenEmbedded: tested with `poky-wrynose` from `bitbake-setup`
 - Linux kernel: `linux-6.18.28` from kernel.org
 
-The layer metadata also declares `scarthgap` compatibility, but the validated
-local build uses Wrynose.
+The Yocto distro identifier remains `k230-linux`, while the user-visible
+distribution name is `kunOS`. The layer metadata also declares `scarthgap`
+compatibility, but the validated local build uses Wrynose.
 
 ## Build QEMU
 
@@ -53,6 +108,8 @@ The exported artifacts are written to:
 ```text
 build-artifacts/k230-canmv/
 ```
+
+The direct WIC image and SDK-compatible SD image are both sized for a 2GiB card.
 
 The image includes BusyBox plus common shell, file, process, network, storage,
 debugging, and package-management tools, including `bash`, GNU core tools,
