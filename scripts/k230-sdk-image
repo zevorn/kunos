@@ -9,24 +9,28 @@ output=""
 load_addr="${K230_SDK_LOAD_ADDR:-0x08000000}"
 sdk_root="${K230_SDK_ROOT:-$HOME/k230-project/sdk/k230_sdk}"
 use_sdk_opensbi=1
+rtt_system="${K230_RTT_SYSTEM:-}"
+no_rtt=0
 
 usage() {
     cat <<EOF
-Usage: $0 [--deploy DIR] [--output IMAGE] [--load-addr ADDR] [--sdk-root DIR] [--no-sdk-opensbi]
+Usage: $0 [--deploy DIR] [--output IMAGE] [--load-addr ADDR] [--sdk-root DIR] [--no-sdk-opensbi] [--rtt-system PATH] [--no-rtt]
 
 Generate an SDK-compatible K230 SD image from Yocto deploy artifacts.
 
 The output image uses the SDK layout expected by k230_boot:
-  rtt    partition at 10MiB
+  rtt    partition at 10MiB (big-core firmware, optional)
   linux  partition at 30MiB containing K230-headed linux_system.bin
   rootfs partition at 128MiB containing the Yocto ext4 rootfs
   disk   2GiB minimum, growing to the next power of two when needed
 
 Defaults:
-  --deploy      build-artifacts/k230-canmv
-  --output      <deploy>/k230-core-image-k230-canmv.sdk-sdcard.img
-  --load-addr   0x08000000
-  --sdk-root    ~/k230-project/sdk/k230_sdk
+  --deploy        build-artifacts/k230-canmv
+  --output        <deploy>/k230-core-image-k230-canmv.sdk-sdcard.img
+  --load-addr     0x08000000
+  --sdk-root      ~/k230-project/sdk/k230_sdk
+  --rtt-system    auto-detected from prebuilt/ or \$K230_RTT_SYSTEM
+  --no-rtt        skip rtt partition population (no warning)
 
 When the K230 SDK OpenSBI source is present, this script builds the SDK
 OpenSBI payload with the Yocto toolchain because SDK U-Boot expects that
@@ -54,6 +58,14 @@ while [ "$#" -gt 0 ]; do
             ;;
         --no-sdk-opensbi)
             use_sdk_opensbi=0
+            shift
+            ;;
+        --rtt-system)
+            rtt_system="$2"
+            shift 2
+            ;;
+        --no-rtt)
+            no_rtt=1
             shift
             ;;
         -h|--help)
@@ -116,6 +128,32 @@ kernel="$(first_existing "$deploy_dir/Image" "$deploy_dir/Image-k230-canmv.bin" 
 dtb="$(first_existing "$deploy_dir/k230-canmv.dtb" "$deploy_dir/canaan/k230-canmv.dtb" "$deploy_dir"/k230-canmv*.dtb 2>/dev/null || true)"
 fw_payload="$(first_existing "$deploy_dir/fw_payload.bin" 2>/dev/null || true)"
 rootfs="$(first_existing "$deploy_dir/k230-core-image-k230-canmv.rootfs.ext4" "$deploy_dir"/*.rootfs.ext4 2>/dev/null || true)"
+
+# -- locate rtt_system.bin (optional) --
+sdk_artifact_dir="${K230_SDK_ARTIFACT_DIR:-}"
+if [ -z "$sdk_artifact_dir" ]; then
+    if [ -f "$repo_root/prebuilt/k230-sdk/riscv-nomtee/u-boot" ]; then
+        sdk_artifact_dir="$repo_root/prebuilt/k230-sdk/riscv-nomtee"
+    else
+        sdk_artifact_dir="$HOME/k230-project/images/riscv-nomtee"
+    fi
+fi
+if [ "$no_rtt" -eq 1 ]; then
+    rtt_system=""
+elif [ -z "$rtt_system" ]; then
+    rtt_system="$(first_existing \
+        "$repo_root/prebuilt/k230-sdk/riscv-nomtee/rtt_system.bin" \
+        "$sdk_artifact_dir/rtt_system.bin" \
+        "$HOME/k230-project/images/riscv-nomtee/rtt_system.bin" \
+        2>/dev/null || true)"
+fi
+if [ -n "$rtt_system" ] && [ ! -f "$rtt_system" ]; then
+    printf 'rtt_system.bin not found at specified path: %s\n' "$rtt_system" >&2
+    exit 2
+fi
+if [ -z "$rtt_system" ]; then
+    printf 'Note: rtt_system.bin not found -- rtt partition will be empty (no KPU/big-core support).\n' >&2
+fi
 
 if [ -z "$kernel" ] || [ -z "$dtb" ] || [ -z "$rootfs" ]; then
     cat >&2 <<EOF
@@ -271,7 +309,7 @@ header = (
 dst.write_bytes(header + payload)
 PY
 
-python3 - "$output" "$work_dir/linux_system.bin" "$rootfs" <<'PY'
+python3 - "$output" "$work_dir/linux_system.bin" "$rootfs" "$rtt_system" <<'PY'
 import binascii
 import pathlib
 import shutil
@@ -285,6 +323,7 @@ MIB = 1024 * 1024
 output = pathlib.Path(sys.argv[1])
 linux_system = pathlib.Path(sys.argv[2])
 rootfs = pathlib.Path(sys.argv[3])
+rtt_system_path = sys.argv[4] if len(sys.argv) > 4 and sys.argv[4] else ""
 
 def align_up(value, align):
     return ((value + align - 1) // align) * align
@@ -395,6 +434,17 @@ with output.open("wb") as image:
     image.seek(last_lba * SECTOR)
     image.write(make_header(last_lba, 1, backup_entries_lba))
 
+    if rtt_system_path:
+        rtt_bin = pathlib.Path(rtt_system_path)
+        rtt_data = rtt_bin.read_bytes()
+        if len(rtt_data) > rtt_size * SECTOR:
+            raise SystemExit(
+                f"rtt_system.bin ({len(rtt_data)} bytes) exceeds "
+                f"rtt partition size ({rtt_size * SECTOR} bytes)"
+            )
+        image.seek(rtt_start * SECTOR)
+        image.write(rtt_data)
+
     image.seek(linux_start * SECTOR)
     with linux_system.open("rb") as src:
         shutil.copyfileobj(src, image, 1024 * 1024)
@@ -409,3 +459,6 @@ PY
 printf 'Created SDK-compatible SD image: %s\n' "$output"
 printf 'linux_system.bin: %s\n' "$work_dir/linux_system.bin"
 printf 'fw_payload.bin: %s\n' "$fw_payload"
+if [ -n "$rtt_system" ]; then
+    printf 'rtt_system.bin: %s\n' "$rtt_system"
+fi
