@@ -222,8 +222,8 @@ EOF
         sdimg="$raw_sd"
     fi
     sd_drive="$(sd_drive_arg "$sdimg")"
-    qemu_exec -machine k230 -m 2G -bios "$uboot_path" \
-        -drive "$sd_drive"
+    qemu_exec -machine k230,boot-both-cores=on -smp 2 -m 2G \
+        -bios "$uboot_path" -drive "$sd_drive"
 fi
 
 if [ -z "$kernel" ] || [ -z "$dtb" ]; then
