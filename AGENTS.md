@@ -51,3 +51,9 @@ Load the matching skill before starting common work:
 - Keep generated files under `build-artifacts/` or Docker volumes.
 - Use the QEMU branch `chao-k230-dev`.
 - Explain boot problems by path: QEMU, firmware, kernel, device tree, rootfs.
+
+## Git Commits
+
+- Sign commits as `Signed-off-by: Name <email>`, taking `Name` from
+  `git config user.name` and `email` from `git config user.email`.
+- Do not add AI, Claude, agent, or `Co-Authored-By` attribution trailers.

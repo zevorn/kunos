@@ -19,11 +19,15 @@ history in this repository.
 3. Write the subject as `<prefix>: <imperative summary>`.
 4. Add a body when the subject is not enough. Explain what changed, why, the
    approach used, and relevant testing.
-5. Add `AI-Generated: Assisted-by OpenAI Codex` before `Signed-off-by` when
-   Codex materially created or changed the commit contents.
-6. End with `Signed-off-by: <git user.name> <git user.email>`.
-7. Use `git commit -s` or add the sign-off trailer manually when scripting
-   commits. Re-check `git log --format=fuller -n <count>` before pushing.
+5. Do not add AI attribution, `AI-Generated`, `Co-Authored-By`, Claude, or
+   agent-generated footer lines.
+6. Read the sign-off identity from `git config user.name` and
+   `git config user.email`; stop and ask the user to configure Git if either is
+   missing.
+7. End with exactly `Signed-off-by: Name <email>`, taking `Name` from
+   `git config user.name` and `email` from `git config user.email`.
+   Use `git commit -s`, or add that trailer manually when scripting commits.
+8. Re-check `git log --format=fuller -n <count>` before pushing.
 
 ## Subject Rules
 
@@ -50,9 +54,7 @@ Explain the change and why this approach fits the layer.
 Testing:
 - <command or runtime validation>
 
-AI-Generated: Assisted-by OpenAI Codex
-
-Signed-off-by: Name <email>
+Signed-off-by: $(git config user.name) <$(git config user.email)>
 ```
 
 Use `Fixes [YOCTO #bug-id]` in the body only when there is a real Yocto
@@ -66,4 +68,5 @@ Changes for Submission":
 - Single commits per change.
 - Summary prefixes should be the recipe name or short file path.
 - Commit bodies should describe what, why, approach, and testing.
-- AI generated code must be labeled before the sign-off.
+- This repository's `AGENTS.md` overrides generic AI-label guidance: use only
+  the Git-configured Signed-off-by trailer above.

@@ -12,10 +12,10 @@ Test the narrowest thing first, then boot.
 
 | Scope | Command |
 |-------|---------|
-| Shell syntax | `bash -n scripts/*` |
-| DTS syntax | `dtc -I dts -O dtb -o /tmp/k230-canmv.dtb recipes-kernel/linux/files/k230-canmv.dts` |
-| BitBake image | `./scripts/yocto-bitbake k230-core-image` |
-| Deploy export | `./scripts/yocto-export-deploy` |
+| Fast static checks | `./scripts/k230-check` |
+| BitBake image | `./scripts/k230-check --bitbake` |
+| Deploy export | `./scripts/k230-check --export-deploy` |
+| QEMU smoke | `./scripts/k230-check --qemu-smoke --deploy build-artifacts/k230-canmv` |
 
 ## Runtime Smoke
 
