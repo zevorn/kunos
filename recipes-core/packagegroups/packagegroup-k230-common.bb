@@ -50,4 +50,5 @@ RDEPENDS:${PN} = " \
     parted \
     mtd-utils \
     opkg \
+    squashfs-tools \
 "

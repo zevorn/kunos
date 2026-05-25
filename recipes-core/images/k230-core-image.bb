@@ -14,7 +14,7 @@ IMAGE_INSTALL = " \
 IMAGE_ROOTFS_SIZE ?= "262144"
 IMAGE_ROOTFS_EXTRA_SPACE ?= "65536"
 
-ROOTFS_POSTPROCESS_COMMAND += "k230_serial_autologin_root; k230_network_interfaces_cleanup; "
+ROOTFS_POSTPROCESS_COMMAND += "k230_serial_autologin_root; k230_network_interfaces_cleanup; k230_tmpfs_mountpoints; k230_sysctl_embedded; "
 
 k230_serial_autologin_root() {
     inittab="${IMAGE_ROOTFS}${sysconfdir}/inittab"
@@ -28,4 +28,34 @@ k230_network_interfaces_cleanup() {
     if [ -e "$interfaces" ]; then
         sed -i "/^# Busybox ifupdown won't process \\/en\\* correctly$/,/^iface eth inet dhcp$/d" "$interfaces"
     fi
+}
+
+k230_tmpfs_mountpoints() {
+    for d in tmp var/log var/tmp; do
+        mkdir -p "${IMAGE_ROOTFS}/$d"
+    done
+}
+
+k230_sysctl_embedded() {
+    conf="${IMAGE_ROOTFS}${sysconfdir}/sysctl.conf"
+    cat >> "$conf" <<'SYSCONF'
+
+# kunOS embedded sysctl optimizations for 2 GB RISC-V64
+vm.swappiness = 1
+vm.dirty_ratio = 10
+vm.dirty_background_ratio = 5
+vm.vfs_cache_pressure = 50
+vm.min_free_kbytes = 8192
+vm.page-cluster = 0
+net.ipv4.tcp_fastopen = 3
+net.ipv4.tcp_slow_start_after_idle = 0
+net.ipv4.tcp_keepalive_time = 300
+net.ipv4.tcp_keepalive_intvl = 30
+net.ipv4.tcp_keepalive_probes = 3
+net.ipv4.tcp_fin_timeout = 15
+fs.file-max = 65536
+fs.inotify.max_user_watches = 8192
+kernel.panic = 10
+kernel.sysrq = 1
+SYSCONF
 }

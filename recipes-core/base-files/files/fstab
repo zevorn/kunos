@@ -1,0 +1,24 @@
+# /etc/fstab: kunOS static filesystem information
+#
+# Root filesystem on SD card.  noatime avoids a metadata write on every read,
+# measurably extending SD card lifespan.
+/dev/mmcblk1p2  /       ext4    defaults,noatime    0  1
+
+# Boot partition is only read by U-Boot and the kernel at startup.
+/dev/mmcblk1p1  /boot   vfat    defaults,noatime,ro 0  0
+
+# ---- Volatile tmpfs mounts (RAM-backed, lost on reboot) ----
+
+# General temporary files.
+tmpfs           /tmp        tmpfs   defaults,noatime,nosuid,size=128M   0  0
+
+# Runtime data: pid files and sockets.  initscripts creates /var/run -> /run
+# so we mount on /run directly.
+tmpfs           /run        tmpfs   defaults,noatime,nosuid,size=16M    0  0
+
+# System logs.  Persistent logging would wear the SD card; ship important
+# logs off-device with rsync or remote syslog.
+tmpfs           /var/log    tmpfs   defaults,noatime,nosuid,size=32M    0  0
+
+# Persistent-ish temporary files that survive program restarts but not reboots.
+tmpfs           /var/tmp    tmpfs   defaults,noatime,nosuid,size=64M    0  0
