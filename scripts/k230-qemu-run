@@ -187,7 +187,7 @@ qemu_exec() {
         exec "$qemu_bin" "$@" -nic user,model=usb-rtl8152,hostfwd=tcp::10022-:22 -nographic
     fi
 
-    exec "$qemu_bin" "$@" -nographic
+    exec "$qemu_bin" "$@" -nic none -nographic
 }
 
 if [ "$use_uboot" -eq 1 ]; then

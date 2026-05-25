@@ -13,6 +13,7 @@ IMAGE_INSTALL = " \
 
 IMAGE_ROOTFS_SIZE ?= "262144"
 IMAGE_ROOTFS_EXTRA_SPACE ?= "65536"
+EXTRA_IMAGECMD:ext4 = "-i 4096 -L root"
 
 ROOTFS_POSTPROCESS_COMMAND += "k230_serial_autologin_root; k230_network_interfaces_cleanup; k230_tmpfs_mountpoints; k230_sysctl_embedded; "
 
@@ -27,6 +28,7 @@ k230_network_interfaces_cleanup() {
     interfaces="${IMAGE_ROOTFS}${sysconfdir}/network/interfaces"
     if [ -e "$interfaces" ]; then
         sed -i "/^# Busybox ifupdown won't process \\/en\\* correctly$/,/^iface eth inet dhcp$/d" "$interfaces"
+        sed -i "s/^auto eth0$/# eth0 DHCP is started asynchronously by k230-network./" "$interfaces"
     fi
 }
 

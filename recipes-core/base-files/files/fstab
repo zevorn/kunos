@@ -2,10 +2,11 @@
 #
 # Root filesystem on SD card.  noatime avoids a metadata write on every read,
 # measurably extending SD card lifespan.
-/dev/mmcblk1p2  /       ext4    defaults,noatime    0  1
+LABEL=root      /       ext4    defaults,noatime    0  1
 
-# Boot partition is only read by U-Boot and the kernel at startup.
-/dev/mmcblk1p1  /boot   vfat    defaults,noatime,ro 0  0
+# Direct WIC images have a boot filesystem.  SDK GPT images use the first
+# partitions for raw firmware payloads, so /boot is optional there.
+LABEL=boot      /boot   vfat    defaults,noatime,ro,nofail 0  0
 
 # ---- Volatile tmpfs mounts (RAM-backed, lost on reboot) ----
 

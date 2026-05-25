@@ -13,6 +13,7 @@ FSTAB = REPO_ROOT / "recipes-core/base-files/files/fstab"
 PROFILE = REPO_ROOT / "recipes-core/base-files/files/profile"
 ISSUE = REPO_ROOT / "recipes-core/base-files/files/issue"
 MOTD = REPO_ROOT / "recipes-core/base-files/files/motd"
+K230_NETWORK = REPO_ROOT / "recipes-core/base-files/files/k230-network"
 BBAPPEND = REPO_ROOT / "recipes-core/base-files/base-files_%.bbappend"
 IMAGE_BB = REPO_ROOT / "recipes-core/images/k230-core-image.bb"
 DISTRO_CONF = REPO_ROOT / "conf/distro/k230-linux.conf"
@@ -110,12 +111,12 @@ class FstabTest(unittest.TestCase):
         cls.text = _read(FSTAB)
 
     def test_root_noatime(self):
-        _assert_contains(self.text, "/dev/mmcblk1p2  /       ext4    defaults,noatime    0  1",
-                         "root with noatime")
+        _assert_contains(self.text, "LABEL=root      /       ext4    defaults,noatime    0  1",
+                         "root label with noatime")
 
-    def test_boot_readonly(self):
-        _assert_contains(self.text, "/dev/mmcblk1p1  /boot   vfat    defaults,noatime,ro 0  0",
-                         "/boot read-only")
+    def test_boot_readonly_optional(self):
+        _assert_contains(self.text, "LABEL=boot      /boot   vfat    defaults,noatime,ro,nofail 0  0",
+                         "/boot read-only optional")
 
     def test_tmpfs_tmp(self):
         _assert_contains(self.text, "tmpfs           /tmp        tmpfs   defaults,noatime,nosuid,size=128M   0  0",
@@ -221,6 +222,14 @@ class BaseFilesBbappendTest(unittest.TestCase):
         _assert_contains(self.text, "install -m 0644 ${UNPACKDIR}/fstab",
                          "fstab install")
 
+    def test_installs_k230_network(self):
+        _assert_contains(self.text, "install -m 0755 ${UNPACKDIR}/k230-network",
+                         "k230-network install")
+
+    def test_links_k230_network(self):
+        _assert_contains(self.text, "ln -snf ../init.d/k230-network",
+                         "k230-network rc5 symlink")
+
     def test_installs_profile(self):
         _assert_contains(self.text, "install -m 0644 ${UNPACKDIR}/profile",
                          "profile install")
@@ -253,6 +262,14 @@ class ImageRecipeTest(unittest.TestCase):
     def test_postprocess_has_sysctl(self):
         _assert_contains(self.text, "k230_sysctl_embedded",
                          "ROOTFS_POSTPROCESS_COMMAND includes k230_sysctl_embedded")
+
+    def test_ext4_root_label(self):
+        _assert_contains(self.text, 'EXTRA_IMAGECMD:ext4 = "-i 4096 -L root"',
+                         "ext4 rootfs image has root label")
+
+    def test_networking_disables_auto_eth0(self):
+        _assert_contains(self.text, "eth0 DHCP is started asynchronously by k230-network",
+                         "ifupdown eth0 DHCP is disabled")
 
     def test_sysctl_function_has_vm_swappiness(self):
         _assert_contains(self.text, "vm.swappiness = 1",
@@ -329,6 +346,22 @@ class DistroConfigTest(unittest.TestCase):
     def test_sysklogd(self):
         _assert_contains(self.text, 'VIRTUAL-RUNTIME_syslog ?= "sysklogd"',
                          "sysklogd")
+
+
+class K230NetworkScriptTest(unittest.TestCase):
+    """Verify K230 networking starts DHCP without blocking boot."""
+
+    @classmethod
+    def setUpClass(cls):
+        cls.text = _read(K230_NETWORK)
+
+    def test_uses_udhcpc_background(self):
+        _assert_contains(self.text, 'udhcpc -R -b -p "$pid" -i "$iface"',
+                         "k230-network uses background udhcpc")
+
+    def test_fallback_uses_dhcpcd_background(self):
+        _assert_contains(self.text, 'dhcpcd -b "$iface"',
+                         "k230-network uses background dhcpcd fallback")
 
 
 class PackageGroupTest(unittest.TestCase):

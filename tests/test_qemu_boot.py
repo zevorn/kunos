@@ -5,6 +5,9 @@ is available (set K230_DEPLOY_DIR or pass --deploy to k230-check).
 """
 
 import os
+import errno
+import fcntl
+import pty
 import subprocess
 import tempfile
 import unittest
@@ -188,13 +191,14 @@ class DeployArtifactsTest(unittest.TestCase):
                         "U-Boot binary must be non-empty")
 
     def test_fstab_matches_wic_devices(self):
-        """fstab root device (/dev/mmcblk1p2) must match WIC layout."""
+        """fstab labels must work for direct WIC and SDK GPT layouts."""
         fstab = REPO_ROOT / "recipes-core/base-files/files/fstab"
         if not fstab.is_file():
             self.skipTest("fstab not found")
         text = _read(fstab)
-        _assert_contains(text, "/dev/mmcblk1p2", "fstab root device mmcblk1p2")
-        _assert_contains(text, "/dev/mmcblk1p1", "fstab boot device mmcblk1p1")
+        _assert_contains(text, "LABEL=root", "fstab root label")
+        _assert_contains(text, "LABEL=boot", "fstab boot label")
+        _assert_contains(text, "nofail", "fstab optional boot mount")
 
 
 # ---------------------------------------------------------------------------
@@ -224,6 +228,9 @@ class _QemuSmokeBase:
         os.close(fd)
         log_file = Path(path_str)
         self.addCleanup(os.unlink, path_str)
+        self._master_fd, slave_fd = pty.openpty()
+        flags = fcntl.fcntl(self._master_fd, fcntl.F_GETFL)
+        fcntl.fcntl(self._master_fd, fcntl.F_SETFL, flags | os.O_NONBLOCK)
 
         cmd = [
             str(SCRIPT),
@@ -235,12 +242,33 @@ class _QemuSmokeBase:
         if self._mode == "uboot":
             cmd.append("--uboot")
 
-        with open(log_file, "w") as out:
+        try:
             self._proc = subprocess.Popen(
-                cmd, stdout=out, stderr=subprocess.STDOUT,
+                cmd, stdin=slave_fd, stdout=slave_fd, stderr=slave_fd,
             )
+        finally:
+            os.close(slave_fd)
 
         return log_file
+
+    def _drain_qemu_output(self, log_file: Path):
+        chunks = []
+        while True:
+            try:
+                chunk = os.read(self._master_fd, 4096)
+            except BlockingIOError:
+                break
+            except OSError as exc:
+                if exc.errno in (errno.EIO, errno.EBADF):
+                    break
+                raise
+            if not chunk:
+                break
+            chunks.append(chunk)
+
+        if chunks:
+            with open(log_file, "ab") as out:
+                out.write(b"".join(chunks))
 
     def _wait_for_marker(self, log_file: Path) -> bool:
         """Poll log_file until a boot marker appears or timeout expires."""
@@ -248,6 +276,7 @@ class _QemuSmokeBase:
         deadline = time.time() + self.timeout
 
         while time.time() < deadline:
+            self._drain_qemu_output(log_file)
             if self._proc.poll() is not None:
                 # QEMU exited — check what we got
                 break
@@ -265,12 +294,18 @@ class _QemuSmokeBase:
         return False
 
     def _kill_qemu(self):
-        if self._proc and self._proc.poll() is None:
+        if getattr(self, "_proc", None) and self._proc.poll() is None:
             self._proc.kill()
             try:
                 self._proc.wait(timeout=10)
             except subprocess.TimeoutExpired:
                 pass
+        if getattr(self, "_master_fd", None) is not None:
+            try:
+                os.close(self._master_fd)
+            except OSError:
+                pass
+            self._master_fd = None
 
     def test_boot_reaches_login(self):
         """Smoke: QEMU boots and reaches a login prompt or shell."""
@@ -366,6 +401,8 @@ class QemuRunScriptTest(unittest.TestCase):
     def test_no_net_flag_accepted(self):
         _assert_contains(self.text, "--no-net",
                          "script supports --no-net")
+        _assert_contains(self.text, "-nic none",
+                         "--no-net disables QEMU default networking")
 
     def test_help_flag_accepted(self):
         _assert_contains(self.text, "-h|--help",
