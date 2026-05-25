@@ -4,10 +4,10 @@ set -euo pipefail
 script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 repo_root="$(cd "$script_dir/.." && pwd)"
 
-ssh_cmd="${K230_RTT_SSH_CMD:-ssh zevorn@e17157889b1b4650.natapp.cc -p 23333}"
-sdk_remote_root="${K230_SDK_REMOTE_ROOT:-/home/zevorn/k230_sdk}"
+ssh_cmd="${K230_RTT_SSH_CMD:-}"
+sdk_remote_root="${K230_SDK_REMOTE_ROOT:-}"
 conf="${K230_RTT_CONF:-k230_canmv_defconfig}"
-scp_dst="${1:-$repo_root/prebuilt/k230-sdk/riscv-nomtee}"
+output_dir="${1:-$repo_root/prebuilt/k230-sdk/riscv-nomtee}"
 
 usage() {
     cat <<EOF
@@ -17,9 +17,11 @@ Build K230 big-core (RTT Smart) firmware on the remote SDK host and
 download rtt_system.bin.
 
 Environment:
-  K230_RTT_SSH_CMD        SSH command for remote host
-  K230_SDK_REMOTE_ROOT    Path to K230 SDK on remote host
+  K230_RTT_SSH_CMD        SSH command for remote host, for example:
+                          ssh user@example.com -p 2222
+  K230_SDK_REMOTE_ROOT    Path to K230 SDK on remote host (required)
   K230_RTT_CONF           SDK defconfig (default: k230_canmv_defconfig)
+  K230_RTT_REMOTE_SRC     Optional remote rtt_system.bin path
 
 Default output: prebuilt/k230-sdk/riscv-nomtee/
 EOF
@@ -30,20 +32,41 @@ if [ "${1:-}" = "-h" ] || [ "${1:-}" = "--help" ]; then
     exit 0
 fi
 
-mkdir -p "$scp_dst"
+if [ -z "$ssh_cmd" ] || [ -z "$sdk_remote_root" ]; then
+    usage >&2
+    cat >&2 <<EOF
+
+Set K230_RTT_SSH_CMD and K230_SDK_REMOTE_ROOT before running this script.
+EOF
+    exit 2
+fi
+
+mkdir -p "$output_dir"
+
+remote_bash() {
+    # K230_RTT_SSH_CMD is configured as a command string, for example:
+    #   ssh user@example.com -p 2222
+    # Feed the script on stdin so OpenSSH does not reparse a multiline
+    # `bash -lc` payload through the remote login shell.
+    $ssh_cmd bash -s -- "$@"
+}
 
 # Step 1: Build big-core firmware on remote host.
 #
 # uboot is built so mkimage is available for the packaging step.
 printf '=== Building big-core firmware on remote host (conf=%s) ===\n' "$conf"
-$ssh_cmd "cd '$sdk_remote_root' && make CONF='$conf' rt-smart-kernel rt-smart-apps big-core-opensbi uboot"
+remote_bash "$sdk_remote_root" "$conf" <<'REMOTE'
+    set -euo pipefail
+    cd "$1"
+    make CONF="$2" rt-smart-kernel rt-smart-apps big-core-opensbi uboot
+REMOTE
 
 # Step 2: Generate rtt_system.bin on remote host.
 #
 # Replicates the SDK gen_rtt_bin() pipeline:
 #   gzip -> U-Boot mkimage header -> K230 firmware header
 printf '=== Generating rtt_system.bin on remote host ===\n'
-$ssh_cmd bash -lc '
+remote_bash "$sdk_remote_root" "$conf" <<'REMOTE'
     set -euo pipefail
     sdk_root="$1"; conf="$2"
     build_dir="$sdk_root/output/$conf"
@@ -81,14 +104,19 @@ $ssh_cmd bash -lc '
 
     mv fn_ug_fw_payload.bin rtt_system.bin
     printf "rtt_system.bin: %s (%d bytes)\n" "$(pwd)/rtt_system.bin" "$(wc -c < rtt_system.bin)"
-' _ "$sdk_remote_root" "$conf"
+REMOTE
 
-# Step 3: Download rtt_system.bin.
+# Step 3: Download rtt_system.bin through the same configured SSH command.
 printf '=== Downloading rtt_system.bin ===\n'
-scp_remote="${K230_RTT_SCP_REMOTE:-zevorn@e17157889b1b4650.natapp.cc}"
-scp_port="${K230_RTT_SCP_PORT:-23333}"
-scp_src="${K230_RTT_SCP_SRC:-$sdk_remote_root/output/$conf/images/big-core/rtt_system.bin}"
+remote_src="${K230_RTT_REMOTE_SRC:-$sdk_remote_root/output/$conf/images/big-core/rtt_system.bin}"
+tmp_output="$output_dir/rtt_system.bin.tmp.$$"
+trap 'rm -f "$tmp_output"' EXIT
 
-scp -P "$scp_port" "$scp_remote:$scp_src" "$scp_dst/rtt_system.bin"
+remote_bash "$remote_src" <<'REMOTE' > "$tmp_output"
+    set -euo pipefail
+    cat "$1"
+REMOTE
+mv "$tmp_output" "$output_dir/rtt_system.bin"
+trap - EXIT
 
-printf 'Done: %s/rtt_system.bin\n' "$scp_dst"
+printf 'Done: %s/rtt_system.bin\n' "$output_dir"

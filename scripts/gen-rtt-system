@@ -9,10 +9,10 @@ Usage:
   ./scripts/gen-rtt-system [--load-addr ADDR] FW_PAYLOAD_BIN [OUTPUT]
 """
 
+import argparse
 import gzip
 import hashlib
 import struct
-import sys
 from pathlib import Path
 
 # U-Boot legacy image header constants (from include/image.h)
@@ -103,21 +103,37 @@ def make_k230_header(payload: bytes) -> bytes:
     return bytes(header)
 
 
-def main():
-    args = [a for a in sys.argv[1:] if not a.startswith("--load-addr")]
-    load_addr = LOAD_ADDR
-    for a in sys.argv[1:]:
-        if a.startswith("--load-addr="):
-            load_addr = int(a.split("=", 1)[1], 0)
-        elif a == "--load-addr" and sys.argv.index(a) + 1 < len(sys.argv):
-            load_addr = int(sys.argv[sys.argv.index(a) + 1], 0)
+def parse_int(value: str) -> int:
+    return int(value, 0)
 
-    if len(args) < 1:
-        print(f"Usage: {sys.argv[0]} [--load-addr ADDR] FW_PAYLOAD_BIN [OUTPUT]")
-        sys.exit(2)
 
-    fw_payload = Path(args[0])
-    output = Path(args[1]) if len(args) > 1 else Path("rtt_system.bin")
+def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
+    parser = argparse.ArgumentParser(
+        description="Generate rtt_system.bin from a big-core fw_payload.bin."
+    )
+    parser.add_argument(
+        "--load-addr",
+        default=LOAD_ADDR,
+        type=parse_int,
+        metavar="ADDR",
+        help=f"RTT firmware load address, default: 0x{LOAD_ADDR:08x}",
+    )
+    parser.add_argument("fw_payload", type=Path, metavar="FW_PAYLOAD_BIN")
+    parser.add_argument(
+        "output",
+        nargs="?",
+        type=Path,
+        default=Path("rtt_system.bin"),
+        metavar="OUTPUT",
+    )
+    return parser.parse_args(argv)
+
+
+def main(argv: list[str] | None = None):
+    args = parse_args(argv)
+    load_addr = args.load_addr
+    fw_payload = args.fw_payload
+    output = args.output
 
     fw_data = fw_payload.read_bytes()
 
