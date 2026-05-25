@@ -1,0 +1,234 @@
+#!/usr/bin/env python3
+"""Interactive QEMU smoke test for K230 images."""
+
+import argparse
+import errno
+import fcntl
+import os
+from pathlib import Path
+import pty
+import re
+import select
+import signal
+import subprocess
+import sys
+import tempfile
+import time
+
+
+PROMPT_RE = re.compile(r"(?:^|\r|\n)(?:root@[^\r\n#]*# |/ # )")
+DONE_MARKER = "__K230_SMOKE_DONE__"
+
+
+def parse_args():
+    parser = argparse.ArgumentParser(
+        description="Boot K230 QEMU, enter the serial shell, and run a command."
+    )
+    parser.add_argument("--mode", choices=("initrd", "sd", "uboot"),
+                        default="initrd")
+    parser.add_argument("--deploy", default=os.environ.get(
+        "K230_DEPLOY_DIR", "build-artifacts/k230-canmv"))
+    parser.add_argument("--timeout", type=int, default=int(os.environ.get(
+        "K230_QEMU_SMOKE_TIMEOUT", "120")))
+    parser.add_argument("--command", default="fastfetch")
+    parser.add_argument("--log-file")
+    return parser.parse_args()
+
+
+def make_qemu_command(script_dir: Path, args) -> list[str]:
+    cmd = [str(script_dir / "k230-qemu-run"), "--deploy", args.deploy]
+
+    if args.mode == "initrd":
+        cmd.append("--initrd")
+    elif args.mode == "sd":
+        cmd.extend(["--sd", "--snapshot"])
+    else:
+        cmd.extend(["--sd", "--uboot", "--snapshot"])
+
+    cmd.append("--no-net")
+    return cmd
+
+
+class SerialSession:
+    def __init__(self, cmd: list[str], log_file: Path):
+        self.cmd = cmd
+        self.log_file = log_file
+        self.master_fd = None
+        self.proc = None
+        self.text = ""
+
+    def start(self):
+        master_fd, slave_fd = pty.openpty()
+        flags = fcntl.fcntl(master_fd, fcntl.F_GETFL)
+        fcntl.fcntl(master_fd, fcntl.F_SETFL, flags | os.O_NONBLOCK)
+        self.master_fd = master_fd
+
+        try:
+            self.proc = subprocess.Popen(
+                self.cmd,
+                stdin=slave_fd,
+                stdout=slave_fd,
+                stderr=slave_fd,
+                start_new_session=True,
+            )
+        finally:
+            os.close(slave_fd)
+
+    def drain(self, timeout: float):
+        assert self.master_fd is not None
+        ready, _, _ = select.select([self.master_fd], [], [], timeout)
+        if not ready:
+            return
+
+        chunks = []
+        while True:
+            try:
+                chunk = os.read(self.master_fd, 8192)
+            except BlockingIOError:
+                break
+            except OSError as exc:
+                if exc.errno in (errno.EBADF, errno.EIO):
+                    break
+                raise
+            if not chunk:
+                break
+            chunks.append(chunk)
+
+        if not chunks:
+            return
+
+        data = b"".join(chunks)
+        with self.log_file.open("ab") as out:
+            out.write(data)
+        self.text += data.decode("utf-8", errors="replace")
+
+    def send(self, data: str):
+        assert self.master_fd is not None
+        os.write(self.master_fd, data.encode())
+
+    def stop(self):
+        if self.proc is not None and self.proc.poll() is None:
+            try:
+                os.killpg(self.proc.pid, signal.SIGTERM)
+            except ProcessLookupError:
+                pass
+            try:
+                self.proc.wait(timeout=5)
+            except subprocess.TimeoutExpired:
+                try:
+                    os.killpg(self.proc.pid, signal.SIGKILL)
+                except ProcessLookupError:
+                    pass
+                self.proc.wait(timeout=5)
+
+        if self.master_fd is not None:
+            try:
+                os.close(self.master_fd)
+            except OSError:
+                pass
+            self.master_fd = None
+
+
+def tail(path: Path, limit: int = 4096) -> str:
+    try:
+        data = path.read_bytes()
+    except OSError:
+        return "<unreadable>"
+    return data[-limit:].decode("utf-8", errors="replace")
+
+
+def fail(message: str, log_file: Path) -> int:
+    print(f"{message}. Log: {log_file}", file=sys.stderr)
+    print(tail(log_file), file=sys.stderr)
+    return 1
+
+
+def make_log_file(path: str | None, mode: str) -> Path:
+    if path:
+        return Path(path)
+
+    fd, name = tempfile.mkstemp(prefix=f"k230-qemu-{mode}-", suffix=".log")
+    os.close(fd)
+    return Path(name)
+
+
+def wait_for_shell(session: SerialSession, deadline: float) -> bool:
+    login_seen_at = None
+    root_sent = False
+
+    while time.time() < deadline:
+        session.drain(0.5)
+        if PROMPT_RE.search(session.text):
+            return True
+
+        if not root_sent and "login:" in session.text:
+            if login_seen_at is None:
+                login_seen_at = time.time()
+            elif time.time() - login_seen_at >= 5:
+                session.send("root\n")
+                root_sent = True
+
+        if session.proc is not None and session.proc.poll() is not None:
+            return False
+
+    return False
+
+
+def run_command(session: SerialSession, command: str, deadline: float) -> int | None:
+    session.send(f"{command}; echo {DONE_MARKER}$?\n")
+    pattern = re.compile(rf"{DONE_MARKER}(\d+)")
+
+    while time.time() < deadline:
+        session.drain(0.5)
+        match = pattern.search(session.text)
+        if match:
+            return int(match.group(1))
+
+        if session.proc is not None and session.proc.poll() is not None:
+            return None
+
+    return None
+
+
+def main() -> int:
+    args = parse_args()
+    if args.timeout <= 0:
+        print("--timeout must be greater than zero", file=sys.stderr)
+        return 2
+
+    script_dir = Path(__file__).resolve().parent
+    log_file = make_log_file(args.log_file, args.mode)
+    log_file.parent.mkdir(parents=True, exist_ok=True)
+    log_file.write_bytes(b"")
+
+    session = SerialSession(make_qemu_command(script_dir, args), log_file)
+    deadline = time.time() + args.timeout
+
+    try:
+        session.start()
+        if not wait_for_shell(session, deadline):
+            return fail(
+                f"QEMU smoke timed out before shell after {args.timeout} seconds",
+                log_file,
+            )
+
+        rc = run_command(session, args.command, deadline)
+        if rc is None:
+            return fail(
+                f"QEMU smoke timed out running {args.command!r}",
+                log_file,
+            )
+        if rc != 0:
+            return fail(
+                f"QEMU smoke command {args.command!r} exited with {rc}",
+                log_file,
+            )
+
+        print(f"QEMU smoke ran {args.command!r} in {log_file}")
+        return 0
+    finally:
+        session.stop()
+
+
+if __name__ == "__main__":
+    sys.exit(main())

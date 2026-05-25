@@ -16,6 +16,8 @@ from pathlib import Path
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 SCRIPT = REPO_ROOT / "scripts" / "k230-qemu-run"
+SMOKE_SCRIPT = REPO_ROOT / "scripts" / "k230-qemu-smoke"
+CHECK_SCRIPT = REPO_ROOT / "scripts" / "k230-check"
 MACHINE_CONF = REPO_ROOT / "conf" / "machine" / "k230-canmv.conf"
 WKS_FILE = REPO_ROOT / "wic" / "k230-canmv-sdimage.wks"
 UBOOT_BINARY = REPO_ROOT / "prebuilt" / "k230-sdk" / "riscv-nomtee" / "u-boot"
@@ -407,6 +409,38 @@ class QemuRunScriptTest(unittest.TestCase):
     def test_help_flag_accepted(self):
         _assert_contains(self.text, "-h|--help",
                          "script supports --help")
+
+
+class QemuSmokeScriptTest(unittest.TestCase):
+    """Validate interactive QEMU smoke checks the runtime command path."""
+
+    @classmethod
+    def setUpClass(cls):
+        cls.smoke_text = _read(SMOKE_SCRIPT)
+        cls.check_text = _read(CHECK_SCRIPT)
+
+    def test_smoke_runs_fastfetch_by_default(self):
+        _assert_contains(self.smoke_text,
+                         'parser.add_argument("--command", default="fastfetch")',
+                         "smoke helper defaults to fastfetch")
+
+    def test_smoke_waits_for_root_shell(self):
+        _assert_contains(self.smoke_text, "PROMPT_RE",
+                         "smoke helper waits for a shell prompt")
+        _assert_contains(self.smoke_text, "login:",
+                         "smoke helper handles login prompts")
+
+    def test_smoke_checks_command_exit_code(self):
+        _assert_contains(self.smoke_text, "__K230_SMOKE_DONE__",
+                         "smoke helper marks command completion")
+        _assert_contains(self.smoke_text, "exited with",
+                         "smoke helper fails on non-zero command status")
+
+    def test_k230_check_uses_interactive_smoke_helper(self):
+        _assert_contains(self.check_text, "k230-qemu-smoke",
+                         "k230-check should use interactive smoke helper")
+        _assert_contains(self.check_text, "--command fastfetch",
+                         "k230-check smoke should execute fastfetch")
 
 
 if __name__ == "__main__":
