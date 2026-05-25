@@ -148,6 +148,7 @@ shell_scripts=(
     scripts/k230-sdk-image
     scripts/yocto-bitbake
     scripts/yocto-build-image
+    scripts/yocto-build-targets
     scripts/yocto-common.sh
     scripts/yocto-export-deploy
     scripts/yocto-init

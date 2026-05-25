@@ -111,6 +111,12 @@ build-artifacts/k230-canmv/
 
 The direct WIC image and SDK-compatible SD image are both sized for a 2GiB card.
 
+To rebuild changed components and refresh all boot artifacts in one command:
+
+```bash
+./scripts/yocto-build-targets fastfetch linux-k230
+```
+
 The image includes BusyBox plus common shell, file, process, network, storage,
 debugging, and package-management tools, including `bash`, GNU core tools,
 `find`, `grep`, `sed`, `awk`, `tar`, `xz`, `iproute2`, `net-tools`, Dropbear,
