@@ -155,7 +155,7 @@ class ProfileTest(unittest.TestCase):
         cls.text = _read(PROFILE)
 
     def test_editor(self):
-        _assert_contains(self.text, "export EDITOR=vim", "EDITOR=vim")
+        _assert_contains(self.text, "export EDITOR=vi", "EDITOR=vi")
 
     def test_histsize(self):
         _assert_contains(self.text, "export HISTSIZE=1000", "HISTSIZE")
@@ -414,14 +414,25 @@ class DropbearOverrideTest(unittest.TestCase):
 
 
 class PackageGroupTest(unittest.TestCase):
-    """Verify packagegroup includes newly added embedded packages."""
+    """Verify runtime and development packagegroups keep the intended split."""
 
     @classmethod
     def setUpClass(cls):
-        cls.text = _read(PACKAGEGROUP_BB)
+        cls.runtime_text = _read(PACKAGEGROUP_BB)
+        cls.development_text = _read(
+            REPO_ROOT / "recipes-core/packagegroups/packagegroup-k230-development.bb"
+        )
 
-    def test_squashfs_tools(self):
-        _assert_contains(self.text, "squashfs-tools",
-                         "squashfs-tools in RDEPENDS")
+    def test_runtime_group_keeps_squashfs_tools(self):
+        _assert_contains(self.runtime_text, "squashfs-tools",
+                         "runtime packagegroup keeps squashfs-tools")
+
+    def test_runtime_group_omits_vim(self):
+        self.assertNotIn("    vim \\\n", self.runtime_text,
+                         "runtime packagegroup should not include vim")
+
+    def test_development_group_includes_vim(self):
+        _assert_contains(self.development_text, "    vim \\",
+                         "development packagegroup should include vim")
 if __name__ == "__main__":
     unittest.main()
