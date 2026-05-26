@@ -669,6 +669,14 @@ class QemuSmokeScriptTest(unittest.TestCase):
         _assert_contains(self.smoke_text, "exited with",
                          "smoke helper fails on non-zero command status")
 
+    def test_smoke_supports_no_host_key_uboot_path(self):
+        _assert_contains(self.smoke_text, "--dropbear-no-host-key",
+                         "smoke helper supports no-host-key U-Boot path")
+        _assert_contains(self.smoke_text, "k230-sdk-image",
+                         "smoke helper can rebuild a temporary SDK image")
+        _assert_contains(self.smoke_text, "only supports --mode uboot",
+                         "no-host-key path is restricted to U-Boot mode")
+
     def test_k230_check_uses_interactive_smoke_helper(self):
         _assert_contains(self.check_text, "k230-qemu-smoke",
                          "k230-check should use interactive smoke helper")
