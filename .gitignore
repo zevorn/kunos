@@ -3,3 +3,4 @@ build-artifacts/
 *.tmp
 .DS_Store
 __pycache__/
+.humanize
