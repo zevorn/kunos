@@ -8,6 +8,7 @@ import os
 import errno
 import fcntl
 import pty
+import struct
 import subprocess
 import tempfile
 import unittest
@@ -43,6 +44,82 @@ def _find_deploy_file(pattern: str) -> Path | None:
 
 def _assert_contains(text: str, substr: str, label: str):
     assert substr in text, f"{label}: expected line not found:\n  {substr}"
+
+
+def _parse_sdk_gpt(image: Path) -> dict:
+    """Return primary GPT header fields and populated partition entries."""
+    sector_size = 512
+    with image.open("rb") as disk:
+        disk.seek(sector_size)
+        header = disk.read(sector_size)
+        if header[:8] != b"EFI PART":
+            raise AssertionError(f"{image}: missing primary GPT signature")
+
+        header_size = struct.unpack_from("<I", header, 12)[0]
+        if header_size < 92:
+            raise AssertionError(f"{image}: GPT header is too small")
+
+        first_usable = struct.unpack_from("<Q", header, 40)[0]
+        last_usable = struct.unpack_from("<Q", header, 48)[0]
+        entry_lba = struct.unpack_from("<Q", header, 72)[0]
+        entry_count = struct.unpack_from("<I", header, 80)[0]
+        entry_size = struct.unpack_from("<I", header, 84)[0]
+        if entry_size < 128:
+            raise AssertionError(f"{image}: GPT partition entries are too small")
+
+        disk.seek(entry_lba * sector_size)
+        entries = disk.read(entry_count * entry_size)
+
+    partitions = []
+    empty_type_guid = b"\x00" * 16
+    for index in range(entry_count):
+        offset = index * entry_size
+        entry = entries[offset:offset + entry_size]
+        if len(entry) < entry_size or entry[:16] == empty_type_guid:
+            continue
+
+        start_lba, end_lba, attrs = struct.unpack_from("<QQQ", entry, 32)
+        raw_name = entry[56:128]
+        name = raw_name.decode("utf-16le", errors="ignore").rstrip("\x00")
+        partitions.append({
+            "index": index + 1,
+            "name": name,
+            "start_lba": start_lba,
+            "end_lba": end_lba,
+            "attrs": attrs,
+        })
+
+    return {
+        "first_usable": first_usable,
+        "last_usable": last_usable,
+        "partitions": partitions,
+    }
+
+
+def _read_ext4_superblock(image: Path, start_lba: int) -> dict:
+    """Read ext4 size fields from a partition inside a raw disk image."""
+    sector_size = 512
+    with image.open("rb") as disk:
+        disk.seek(start_lba * sector_size + 1024)
+        superblock = disk.read(1024)
+
+    if len(superblock) < 1024:
+        raise AssertionError(f"{image}: short ext4 superblock")
+    magic = struct.unpack_from("<H", superblock, 56)[0]
+    if magic != 0xEF53:
+        raise AssertionError(f"{image}: rootfs partition is not ext4")
+
+    block_count_lo = struct.unpack_from("<I", superblock, 4)[0]
+    log_block_size = struct.unpack_from("<I", superblock, 24)[0]
+    block_count_hi = struct.unpack_from("<I", superblock, 0x150)[0]
+    block_count = block_count_lo | (block_count_hi << 32)
+    block_size = 1024 << log_block_size
+
+    return {
+        "block_count": block_count,
+        "block_size": block_size,
+        "filesystem_bytes": block_count * block_size,
+    }
 
 
 # ---------------------------------------------------------------------------
@@ -151,6 +228,16 @@ class SdkSdImageLayoutTest(unittest.TestCase):
     def setUpClass(cls):
         cls.text = _read(SDK_IMAGE_SCRIPT)
 
+    def _sdk_image(self) -> Path:
+        image = _find_deploy_file("*sdk-sdcard.img")
+        if image is None:
+            self.skipTest(f"No SDK SD card image found in {DEPLOY_DIR} "
+                          "(run k230-sdk-image first)")
+        return image
+
+    def _sdk_gpt(self) -> dict:
+        return _parse_sdk_gpt(self._sdk_image())
+
     def test_rootfs_partition_extends_to_last_usable_lba(self):
         _assert_contains(self.text,
                          '("rootfs", root_start, last_usable,',
@@ -169,6 +256,45 @@ class SdkSdImageLayoutTest(unittest.TestCase):
     def test_existing_sdk_opensbi_payload_is_preferred(self):
         _assert_contains(self.text, "fw_payload-sdk-opensbi.bin",
                          "SDK image builder should prefer K230 SDK OpenSBI")
+
+    def test_generated_sdk_image_partition_names(self):
+        gpt = self._sdk_gpt()
+        names = [part["name"] for part in gpt["partitions"]]
+        self.assertEqual(names, ["rtt", "linux", "rootfs"])
+
+    def test_generated_sdk_image_has_no_appfs_partition(self):
+        gpt = self._sdk_gpt()
+        forbidden = {"app", "appfs", "fat32appfs"}
+        names = {part["name"] for part in gpt["partitions"]}
+        self.assertTrue(names.isdisjoint(forbidden),
+                        f"unexpected app partition in SDK image: {names}")
+
+    def test_generated_sdk_rootfs_ends_at_last_usable_lba(self):
+        gpt = self._sdk_gpt()
+        rootfs = next(part for part in gpt["partitions"]
+                      if part["name"] == "rootfs")
+        self.assertEqual(rootfs["end_lba"], gpt["last_usable"])
+        self.assertFalse(
+            any(part["start_lba"] > rootfs["end_lba"]
+                for part in gpt["partitions"]),
+            "no partition should trail rootfs",
+        )
+
+    def test_generated_sdk_ext4_fills_rootfs_partition(self):
+        image = self._sdk_image()
+        gpt = _parse_sdk_gpt(image)
+        rootfs = next(part for part in gpt["partitions"]
+                      if part["name"] == "rootfs")
+        ext4 = _read_ext4_superblock(image, rootfs["start_lba"])
+        partition_bytes = (
+            rootfs["end_lba"] - rootfs["start_lba"] + 1
+        ) * 512
+        alignment_bytes = max(ext4["block_size"], 4096)
+        self.assertLessEqual(ext4["filesystem_bytes"], partition_bytes)
+        self.assertLess(
+            partition_bytes - ext4["filesystem_bytes"],
+            alignment_bytes,
+        )
 
 # ---------------------------------------------------------------------------
 # Static deploy artifact existence tests
