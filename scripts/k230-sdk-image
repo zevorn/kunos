@@ -21,7 +21,8 @@ Generate an SDK-compatible K230 SD image from Yocto deploy artifacts.
 The output image uses the SDK layout expected by k230_boot:
   rtt    partition at 10MiB (big-core firmware, optional)
   linux  partition at 30MiB containing K230-headed linux_system.bin
-  rootfs partition at 128MiB containing the Yocto ext4 rootfs
+  rootfs partition at 128MiB containing the Yocto ext4 rootfs expanded to the
+         end of the SD image
   disk   2GiB minimum, growing to the next power of two when needed
 
 Defaults:
@@ -126,7 +127,7 @@ to_container_path() {
 
 kernel="$(first_existing "$deploy_dir/Image" "$deploy_dir/Image-k230-canmv.bin" "$deploy_dir"/Image--*.bin 2>/dev/null || true)"
 dtb="$(first_existing "$deploy_dir/k230-canmv.dtb" "$deploy_dir/canaan/k230-canmv.dtb" "$deploy_dir"/k230-canmv*.dtb 2>/dev/null || true)"
-fw_payload="$(first_existing "$deploy_dir/fw_payload.bin" 2>/dev/null || true)"
+fw_payload="$(first_existing "$deploy_dir/fw_payload-sdk-opensbi.bin" "$deploy_dir/fw_payload.bin" 2>/dev/null || true)"
 rootfs="$(first_existing "$deploy_dir/k230-core-image-k230-canmv.rootfs.ext4" "$deploy_dir"/*.rootfs.ext4 2>/dev/null || true)"
 
 # -- locate rtt_system.bin (optional) --
@@ -309,6 +310,87 @@ header = (
 dst.write_bytes(header + payload)
 PY
 
+sdk_layout_vars="$(python3 - "$rootfs" <<'PY'
+import pathlib
+import sys
+
+SECTOR = 512
+MIB = 1024 * 1024
+
+rootfs = pathlib.Path(sys.argv[1])
+
+def align_up(value, align):
+    return ((value + align - 1) // align) * align
+
+def next_power_of_two(value):
+    out = 1
+    while out < value:
+        out <<= 1
+    return out
+
+def sectors(byte_count):
+    return byte_count // SECTOR
+
+root_start = sectors(128 * MIB)
+rootfs_size = rootfs.stat().st_size
+min_image_size = align_up(root_start * SECTOR + rootfs_size + (33 * SECTOR), MIB)
+image_size = next_power_of_two(max(2048 * MIB, min_image_size))
+total_sectors = image_size // SECTOR
+last_usable = total_sectors - 34
+root_part_bytes = (last_usable - root_start + 1) * SECTOR
+
+print(f"image_size={image_size}")
+print(f"root_part_bytes={root_part_bytes}")
+PY
+)"
+eval "$sdk_layout_vars"
+
+resize_ext4_to_fill_partition() {
+    local image="$1"
+    local size="$2"
+    local c_image
+
+    cp -f "$rootfs" "$image"
+    truncate -s "$size" "$image"
+
+    if command -v e2fsck >/dev/null 2>&1 && command -v resize2fs >/dev/null 2>&1; then
+        set +e
+        e2fsck -fy "$image"
+        rc="$?"
+        set -e
+        if [ "$rc" -gt 1 ]; then
+            printf 'e2fsck failed for %s\n' "$image" >&2
+            exit "$rc"
+        fi
+        resize2fs "$image" >/dev/null
+        return
+    fi
+
+    c_image="$(to_container_path "$image")"
+    "$script_dir/yocto-shell" bash -lc '
+        set -euo pipefail
+        e2fsck="$(find /work/build -path "*/tmp/work/*/e2fsprogs-native/*/recipe-sysroot-native/sbin/e2fsck" -type f -perm -111 2>/dev/null | sort | tail -n 1)"
+        resize2fs="$(find /work/build -path "*/tmp/work/*/e2fsprogs-native/*/recipe-sysroot-native/sbin/resize2fs" -type f -perm -111 2>/dev/null | sort | tail -n 1)"
+        if [ ! -x "$e2fsck" ] || [ ! -x "$resize2fs" ]; then
+            printf "Yocto native e2fsck/resize2fs not found. Build k230-core-image first.\n" >&2
+            exit 2
+        fi
+        set +e
+        "$e2fsck" -fy "$1"
+        rc="$?"
+        set -e
+        if [ "$rc" -gt 1 ]; then
+            exit "$rc"
+        fi
+        "$resize2fs" "$1" >/dev/null
+    ' _ "$c_image"
+}
+
+expanded_rootfs="$work_dir/rootfs-expanded.ext4"
+resize_ext4_to_fill_partition "$expanded_rootfs" "$root_part_bytes"
+rootfs="$expanded_rootfs"
+
+
 python3 - "$output" "$work_dir/linux_system.bin" "$rootfs" "$rtt_system" <<'PY'
 import binascii
 import pathlib
@@ -344,22 +426,19 @@ linux_size = sectors(50 * MIB)
 root_start = sectors(128 * MIB)
 
 rootfs_size = rootfs.stat().st_size
-root_part_bytes = max(512 * MIB, align_up(rootfs_size, 64 * MIB))
-root_size = sectors(root_part_bytes)
-app_start = sectors(align_up(root_start * SECTOR + root_part_bytes, MIB))
-min_image_size = align_up(app_start * SECTOR + 128 * MIB + (34 * SECTOR), MIB)
+min_image_size = align_up(root_start * SECTOR + rootfs_size + (33 * SECTOR), MIB)
 image_size = next_power_of_two(max(2048 * MIB, min_image_size))
 total_sectors = image_size // SECTOR
 last_lba = total_sectors - 1
 backup_entries_lba = last_lba - 32
 first_usable = 34
 last_usable = last_lba - 33
+root_size = last_usable - root_start + 1
 
 parts = [
     ("rtt", rtt_start, rtt_start + rtt_size - 1, "0FC63DAF-8483-4772-8E79-3D69D8477DE4"),
     ("linux", linux_start, linux_start + linux_size - 1, "0FC63DAF-8483-4772-8E79-3D69D8477DE4"),
-    ("rootfs", root_start, root_start + root_size - 1, "0FC63DAF-8483-4772-8E79-3D69D8477DE4"),
-    ("fat32appfs", app_start, last_usable, "EBD0A0A2-B9E5-4433-87C0-68B6B72699C7"),
+    ("rootfs", root_start, last_usable, "0FC63DAF-8483-4772-8E79-3D69D8477DE4"),
 ]
 
 if linux_system.stat().st_size > linux_size * SECTOR:

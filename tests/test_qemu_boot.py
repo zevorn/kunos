@@ -18,6 +18,7 @@ REPO_ROOT = Path(__file__).resolve().parents[1]
 SCRIPT = REPO_ROOT / "scripts" / "k230-qemu-run"
 SMOKE_SCRIPT = REPO_ROOT / "scripts" / "k230-qemu-smoke"
 CHECK_SCRIPT = REPO_ROOT / "scripts" / "k230-check"
+SDK_IMAGE_SCRIPT = REPO_ROOT / "scripts" / "k230-sdk-image"
 MACHINE_CONF = REPO_ROOT / "conf" / "machine" / "k230-canmv.conf"
 WKS_FILE = REPO_ROOT / "wic" / "k230-canmv-sdimage.wks"
 UBOOT_BINARY = REPO_ROOT / "prebuilt" / "k230-sdk" / "riscv-nomtee" / "u-boot"
@@ -136,6 +137,38 @@ class WksDiskLayoutTest(unittest.TestCase):
         self.assertEqual(self.text.count("--ondisk mmcblk1"), 2,
                          "both partitions must target mmcblk1")
 
+
+
+# ---------------------------------------------------------------------------
+# Static SDK SD image layout tests
+# ---------------------------------------------------------------------------
+
+
+class SdkSdImageLayoutTest(unittest.TestCase):
+    """Validate the SDK-compatible GPT image gives remaining space to rootfs."""
+
+    @classmethod
+    def setUpClass(cls):
+        cls.text = _read(SDK_IMAGE_SCRIPT)
+
+    def test_rootfs_partition_extends_to_last_usable_lba(self):
+        _assert_contains(self.text,
+                         '("rootfs", root_start, last_usable,',
+                         "SDK rootfs partition should fill the image tail")
+
+    def test_no_trailing_appfs_partition(self):
+        self.assertNotIn("fat32appfs", self.text,
+                         "SDK image should not reserve trailing appfs space")
+
+    def test_ext4_rootfs_is_expanded_before_copy(self):
+        _assert_contains(self.text, "resize2fs",
+                         "SDK image builder should expand ext4 rootfs")
+        _assert_contains(self.text, "root_part_bytes",
+                         "SDK image builder should size ext4 to partition")
+
+    def test_existing_sdk_opensbi_payload_is_preferred(self):
+        _assert_contains(self.text, "fw_payload-sdk-opensbi.bin",
+                         "SDK image builder should prefer K230 SDK OpenSBI")
 
 # ---------------------------------------------------------------------------
 # Static deploy artifact existence tests
@@ -393,6 +426,69 @@ class QemuRunScriptTest(unittest.TestCase):
                          "uboot mode enables boot-both-cores")
         _assert_contains(self.text, "-smp 2",
                          "uboot mode uses -smp 2")
+
+    def _fake_qemu_args(self, *mode_args: str) -> list[str]:
+        """Run k230-qemu-run against fake artifacts and return QEMU argv."""
+        with tempfile.TemporaryDirectory() as tmp:
+            tmp_path = Path(tmp)
+            deploy = tmp_path / "deploy"
+            deploy.mkdir()
+            for name in (
+                "Image",
+                "k230-canmv.dtb",
+                "k230-core-image-k230-canmv.rootfs.cpio.gz",
+                "k230-core-image-k230-canmv.rootfs.wic",
+                "k230-core-image-k230-canmv.sdk-sdcard.img",
+            ):
+                (deploy / name).write_bytes(b"x")
+
+            sdk_artifacts = tmp_path / "sdk-artifacts"
+            sdk_artifacts.mkdir()
+            uboot = sdk_artifacts / "u-boot"
+            uboot.write_bytes(b"u-boot")
+            uboot.chmod(0o755)
+
+            qemu = tmp_path / "qemu-system-riscv64"
+            qemu.write_text("#!/bin/sh\nprintf '%s\\n' \"$@\"\n")
+            qemu.chmod(0o755)
+
+            result = subprocess.run(
+                [
+                    str(SCRIPT),
+                    *mode_args,
+                    "--deploy", str(deploy),
+                    "--qemu", str(qemu),
+                    "--sdk-artifacts", str(sdk_artifacts),
+                    "--no-net",
+                ],
+                check=True,
+                text=True,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+            )
+            return result.stdout.splitlines()
+
+    def _assert_arg_value(self, args: list[str], option: str, expected: str):
+        self.assertIn(option, args)
+        self.assertEqual(args[args.index(option) + 1], expected)
+
+    def test_initrd_mode_launches_only_small_core(self):
+        args = self._fake_qemu_args("--initrd")
+        self._assert_arg_value(args, "-machine", "k230")
+        self._assert_arg_value(args, "-smp", "1")
+        self.assertNotIn("k230,boot-both-cores=on", args)
+
+    def test_sd_mode_launches_only_small_core(self):
+        args = self._fake_qemu_args("--sd")
+        self._assert_arg_value(args, "-machine", "k230")
+        self._assert_arg_value(args, "-smp", "1")
+        self.assertNotIn("k230,boot-both-cores=on", args)
+
+    def test_uboot_mode_launches_both_cores(self):
+        args = self._fake_qemu_args("--sd", "--uboot")
+        self._assert_arg_value(args, "-machine", "k230,boot-both-cores=on")
+        self._assert_arg_value(args, "-smp", "2")
+        self.assertIn("-bios", args)
 
     def test_snapshot_flag_accepted(self):
         _assert_contains(self.text, "--snapshot",

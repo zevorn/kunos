@@ -129,6 +129,8 @@ debugging, and package-management tools, including `bash`, GNU core tools,
 SDK U-Boot does not boot a normal Yocto WIC layout through its default
 `bootcmd`. It runs `k230_boot`, which expects a GPT SD image with a K230-headed
 `linux_system.bin` in the `linux` partition at 30MiB.
+The SDK-compatible image keeps the SDK-required raw RTT and Linux partitions,
+then expands the ext4 rootfs partition from 128MiB to the end of the SD image.
 
 This repository includes the SDK U-Boot binary used for QEMU:
 
@@ -161,6 +163,10 @@ SDK U-Boot path:
 ```bash
 ./scripts/k230-qemu-run --deploy build-artifacts/k230-canmv --sd --uboot
 ```
+
+The SDK U-Boot path is the only mode that starts both cores (`-smp 2` with
+`boot-both-cores=on`): the big C908V core runs RTT and the small C908 core runs
+Linux.  Direct SD and initramfs modes stay single-core (`-smp 1`).
 
 Direct SD/WIC path:
 
