@@ -1,6 +1,6 @@
 # SPDX-License-Identifier: MIT
 
-SUMMARY = "Common command-line tools for K230 Linux images"
+SUMMARY = "Runtime command-line tools for K230 Linux images"
 LICENSE = "MIT"
 
 inherit packagegroup
@@ -9,11 +9,9 @@ RDEPENDS:${PN} = " \
     packagegroup-core-boot \
     os-release \
     fastfetch \
-    picoclaw \
     busybox \
     bash \
     coreutils \
-    file \
     findutils \
     grep \
     sed \
@@ -34,21 +32,11 @@ RDEPENDS:${PN} = " \
     dhcpcd \
     dropbear \
     ethtool \
-    rsync \
-    socat \
     curl \
     wget \
     less \
-    vim \
-    strace \
-    lsof \
-    sudo \
-    usbutils \
-    pciutils \
     e2fsprogs \
     dosfstools \
-    parted \
-    mtd-utils \
     opkg \
     squashfs-tools \
 "
