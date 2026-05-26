@@ -262,6 +262,16 @@ class SdkSdImageLayoutTest(unittest.TestCase):
         names = [part["name"] for part in gpt["partitions"]]
         self.assertEqual(names, ["rtt", "linux", "rootfs"])
 
+    def test_generated_sdk_image_partition_starts(self):
+        gpt = self._sdk_gpt()
+        starts = {
+            part["name"]: part["start_lba"]
+            for part in gpt["partitions"]
+        }
+        self.assertEqual(starts["rtt"], (10 * 1024 * 1024) // 512)
+        self.assertEqual(starts["linux"], (30 * 1024 * 1024) // 512)
+        self.assertEqual(starts["rootfs"], (128 * 1024 * 1024) // 512)
+
     def test_generated_sdk_image_has_no_appfs_partition(self):
         gpt = self._sdk_gpt()
         forbidden = {"app", "appfs", "fat32appfs"}
@@ -289,12 +299,13 @@ class SdkSdImageLayoutTest(unittest.TestCase):
         partition_bytes = (
             rootfs["end_lba"] - rootfs["start_lba"] + 1
         ) * 512
-        alignment_bytes = max(ext4["block_size"], 4096)
+        # The rootfs partition extends to GPT last_usable, whose byte length is
+        # not guaranteed to be divisible by the ext4 block size.  resize2fs
+        # rounds down to the nearest usable filesystem geometry; keep the
+        # resulting slack below one 4KiB storage page.
+        filesystem_slack = partition_bytes - ext4["filesystem_bytes"]
         self.assertLessEqual(ext4["filesystem_bytes"], partition_bytes)
-        self.assertLess(
-            partition_bytes - ext4["filesystem_bytes"],
-            alignment_bytes,
-        )
+        self.assertLess(filesystem_slack, 4096)
 
 # ---------------------------------------------------------------------------
 # Static deploy artifact existence tests
