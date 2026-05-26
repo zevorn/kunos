@@ -20,6 +20,7 @@ DISTRO_CONF = REPO_ROOT / "conf/distro/k230-linux.conf"
 PACKAGEGROUP_BB = REPO_ROOT / "recipes-core/packagegroups/packagegroup-k230-common.bb"
 DROPBEAR_BBAPPEND = REPO_ROOT / "recipes-core/dropbear/dropbear_%.bbappend"
 DROPBEAR_INIT = REPO_ROOT / "recipes-core/dropbear/files/dropbear"
+PACKAGEGROUP_DEV_BB = REPO_ROOT / "recipes-core/packagegroups/packagegroup-k230-development.bb"
 
 
 def _read(path: Path) -> str:
@@ -419,9 +420,39 @@ class PackageGroupTest(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
         cls.runtime_text = _read(PACKAGEGROUP_BB)
-        cls.development_text = _read(
-            REPO_ROOT / "recipes-core/packagegroups/packagegroup-k230-development.bb"
+        cls.development_text = _read(PACKAGEGROUP_DEV_BB)
+        cls.image_text = _read(IMAGE_BB)
+
+    def _manifest_path(self) -> Path:
+        manifests = sorted(
+            (
+                path for path in REPO_ROOT.glob("build-artifacts/k230-canmv/*.manifest")
+                if path.is_file() and path.stat().st_size > 0
+            ),
+            key=lambda path: path.stat().st_mtime,
+            reverse=True,
         )
+        if not manifests:
+            self.skipTest("default-image manifest not found under build-artifacts/k230-canmv")
+        manifest = manifests[0]
+        newest_input = max(
+            PACKAGEGROUP_BB.stat().st_mtime,
+            PACKAGEGROUP_DEV_BB.stat().st_mtime,
+            IMAGE_BB.stat().st_mtime,
+        )
+        if manifest.stat().st_mtime < newest_input:
+            self.skipTest(
+                f"manifest predates current packagegroup/image split; rebuild/export deploy first: {manifest}"
+            )
+        return manifest
+
+    def _manifest_packages(self) -> set[str]:
+        manifest = self._manifest_path()
+        return {
+            line.split()[0]
+            for line in _read(manifest).splitlines()
+            if line.strip()
+        }
 
     def test_runtime_group_keeps_squashfs_tools(self):
         _assert_contains(self.runtime_text, "squashfs-tools",
@@ -434,5 +465,48 @@ class PackageGroupTest(unittest.TestCase):
     def test_development_group_includes_vim(self):
         _assert_contains(self.development_text, "    vim \\",
                          "development packagegroup should include vim")
+
+    def test_runtime_and_development_groups_both_exist(self):
+        self.assertTrue(PACKAGEGROUP_BB.is_file(), f"missing runtime group: {PACKAGEGROUP_BB}")
+        self.assertTrue(PACKAGEGROUP_DEV_BB.is_file(), f"missing development group: {PACKAGEGROUP_DEV_BB}")
+
+    def test_default_image_installs_runtime_group_only(self):
+        _assert_contains(self.image_text, "packagegroup-k230-common",
+                         "default image installs runtime packagegroup")
+        self.assertNotIn("packagegroup-k230-development", self.image_text,
+                         "default image must not install development packagegroup by default")
+
+    def test_manifest_keeps_required_runtime_packages(self):
+        packages = self._manifest_packages()
+        required = {
+            "bash",
+            "busybox",
+            "coreutils",
+            "dhcpcd",
+            "dropbear",
+            "iproute2",
+            "opkg",
+            "util-linux",
+        }
+        missing = sorted(required - packages)
+        self.assertEqual(missing, [],
+                         f"default manifest missing required runtime packages: {missing}")
+
+    def test_manifest_omits_default_denylisted_development_packages(self):
+        packages = self._manifest_packages()
+        denylist = {
+            "picoclaw",
+            "vim",
+            "vim-common",
+            "vim-help",
+            "vim-syntax",
+            "strace",
+            "lsof",
+        }
+        present = sorted(packages & denylist)
+        self.assertEqual(present, [],
+                         f"default manifest still includes development/debug packages: {present}")
+
+
 if __name__ == "__main__":
     unittest.main()
