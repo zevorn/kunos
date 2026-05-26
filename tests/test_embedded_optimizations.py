@@ -18,6 +18,8 @@ BBAPPEND = REPO_ROOT / "recipes-core/base-files/base-files_%.bbappend"
 IMAGE_BB = REPO_ROOT / "recipes-core/images/k230-core-image.bb"
 DISTRO_CONF = REPO_ROOT / "conf/distro/k230-linux.conf"
 PACKAGEGROUP_BB = REPO_ROOT / "recipes-core/packagegroups/packagegroup-k230-common.bb"
+DROPBEAR_BBAPPEND = REPO_ROOT / "recipes-core/dropbear/dropbear_%.bbappend"
+DROPBEAR_INIT = REPO_ROOT / "recipes-core/dropbear/files/dropbear"
 
 
 def _read(path: Path) -> str:
@@ -364,6 +366,53 @@ class K230NetworkScriptTest(unittest.TestCase):
                          "k230-network uses background dhcpcd fallback")
 
 
+class DropbearOverrideTest(unittest.TestCase):
+    """Verify the layer-local Dropbear override keeps keygen off the rcS foreground path."""
+
+    @classmethod
+    def setUpClass(cls):
+        cls.bbappend_text = _read(DROPBEAR_BBAPPEND)
+        cls.init_text = _read(DROPBEAR_INIT)
+
+    def test_bbappend_installs_override(self):
+        _assert_contains(self.bbappend_text, 'file://dropbear',
+                         "dropbear bbappend adds override script")
+        _assert_contains(self.bbappend_text,
+                         'install -m 0755 ${WORKDIR}/dropbear ${D}${sysconfdir}/init.d/dropbear',
+                         "dropbear bbappend installs override")
+
+    def test_preserves_default_key_path(self):
+        _assert_contains(self.init_text,
+                         'DROPBEAR_RSAKEY_DIR="/etc/dropbear"',
+                         "dropbear override keeps default key directory")
+        _assert_contains(self.init_text,
+                         'DROPBEAR_RSAKEY="${DROPBEAR_RSAKEY_DIR}/dropbear_rsa_host_key"',
+                         "dropbear override keeps default RSA key path")
+
+    def test_background_keygen_worker(self):
+        _assert_contains(self.init_text, 'keygen-worker)',
+                         "dropbear override exposes keygen worker entrypoint")
+        _assert_contains(self.init_text,
+                         'start-stop-daemon -S -b -m -p "$KEYGEN_PIDFILE" -x "$0" -- keygen-worker',
+                         "dropbear override launches background keygen worker")
+
+    def test_start_case_does_not_run_dropbearkey_in_foreground(self):
+        start_case = self.init_text.split('start)', 1)[1].split(';;', 1)[0]
+        self.assertNotIn('dropbearkey -t rsa', start_case,
+                         "dropbear start path must not run dropbearkey in foreground")
+        self.assertIn('launch_keygen_worker', start_case,
+                      "dropbear start path should defer missing-key work to background")
+
+    def test_logs_to_stable_path(self):
+        _assert_contains(self.init_text, 'LOGFILE=/var/log/dropbear-keygen.log',
+                         "dropbear override logs keygen status to stable path")
+
+    def test_no_private_hostkey_in_layer(self):
+        hostkey_files = list((REPO_ROOT / "recipes-core/dropbear/files").glob("*host*key*"))
+        self.assertEqual(hostkey_files, [],
+                         f"dropbear layer must not ship private host keys: {hostkey_files}")
+
+
 class PackageGroupTest(unittest.TestCase):
     """Verify packagegroup includes newly added embedded packages."""
 
@@ -374,7 +423,5 @@ class PackageGroupTest(unittest.TestCase):
     def test_squashfs_tools(self):
         _assert_contains(self.text, "squashfs-tools",
                          "squashfs-tools in RDEPENDS")
-
-
 if __name__ == "__main__":
     unittest.main()
