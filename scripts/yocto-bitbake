@@ -58,5 +58,7 @@ PARALLEL_MAKE ?= "-j ${YOCTO_PARALLEL_MAKE_JOBS:-12}"
 EOF
 fi
 
+export BB_SERVER_TIMEOUT="${BB_SERVER_TIMEOUT:--1}"
+
 bitbake "${bitbake_args[@]}"
 ' yocto-bitbake "$@"

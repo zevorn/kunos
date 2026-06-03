@@ -32,6 +32,10 @@ yocto_find_docker() {
 yocto_platform_tag() {
     printf '%s\n' "${1#linux/}" | tr '/' '-'
 }
+yocto_container_tag() {
+    printf '%s' "$1" | tr -c '[:alnum:]_.-' '-'
+}
+
 
 YOCTO_PLATFORM="${YOCTO_PLATFORM:-$(yocto_default_platform)}"
 YOCTO_IMAGE="${YOCTO_IMAGE:-local/yocto-ubuntu24:$(yocto_platform_tag "$YOCTO_PLATFORM")}"
@@ -41,6 +45,7 @@ YOCTO_DOWNLOADS_VOLUME="${YOCTO_DOWNLOADS_VOLUME:-${YOCTO_VOLUME_PREFIX}-downloa
 YOCTO_SSTATE_VOLUME="${YOCTO_SSTATE_VOLUME:-${YOCTO_VOLUME_PREFIX}-sstate}"
 YOCTO_BB_THREADS="${YOCTO_BB_THREADS:-12}"
 YOCTO_PARALLEL_MAKE_JOBS="${YOCTO_PARALLEL_MAKE_JOBS:-12}"
+YOCTO_CONTAINER_NAME="${YOCTO_CONTAINER_NAME:-${YOCTO_VOLUME_PREFIX}-$(yocto_container_tag "$YOCTO_ROOT")-$(yocto_container_tag "$YOCTO_PLATFORM")}"
 DOCKER="${DOCKER:-$(yocto_find_docker)}"
 
 yocto_require_docker() {
